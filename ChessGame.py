@@ -29,6 +29,7 @@ HP_MAP = {
 }
 
 DAMAGE_PER_SECOND = 10
+STOP_BTN_RADIUS = 10
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -78,13 +79,17 @@ class Piece:
         self.knight_timer = 0.0
         self.knight_duration = 0.0   # seconds for half of the animation
 
+        self.path = []               # list of (col, row) waypoints
+        self.path_index = 0
+        self.waiting = False         # True if blocked by enemy, waiting to proceed
+
         self.has_moved = False       # for pawn double-step
 
     # Where is this piece's "next tile" (the tile it is heading towards)?
     @property
     def next_tile(self):
-        if self.moving:
-            return (self.target_col, self.target_row)
+        if self.moving and self.path and self.path_index < len(self.path):
+            return self.path[self.path_index]
         return None
 
     @property
@@ -98,17 +103,36 @@ class Piece:
         self.origin_row = self.row
         self.target_col = tcol
         self.target_row = trow
+        self.path = self._compute_path()
+        self.path_index = 0
+        self.waiting = False
         self.moving = True
 
         if self.name == "Knight":
-            # Compute duration so speed matches other pieces (based on Manhattan-like
-            # distance of a knight = 3 tiles, at PIECE_SPEED tiles/sec).
-            dist = 3.0  # conceptual knight travel distance
+            dist = 3.0
             total_time = dist / PIECE_SPEED
             self.knight_duration = total_time / 2.0
             self.knight_phase = "fadeout"
             self.knight_timer = 0.0
             self.knight_alpha = 255
+
+    def _compute_path(self):
+        """Compute waypoints from current position to target (excluding current tile)."""
+        if self.name == "Knight":
+            return [(self.target_col, self.target_row)]
+        path = []
+        c, r = self.col, self.row
+        tc, tr = self.target_col, self.target_row
+        dc = 0 if tc == c else (1 if tc > c else -1)
+        dr = 0 if tr == r else (1 if tr > r else -1)
+        cc, rr = c + dc, r + dr
+        while True:
+            path.append((cc, rr))
+            if cc == tc and rr == tr:
+                break
+            cc += dc
+            rr += dr
+        return path
 
     # ------------------------------------------------------------------
     def update(self, dt, pieces):
@@ -124,19 +148,44 @@ class Piece:
 
     # ------------------------------------------------------------------
     def _update_slide(self, dt, pieces):
-        tx = float(self.target_col * TILE)
-        ty = float(self.target_row * TILE)
+        if self.path_index >= len(self.path):
+            self._finish_move()
+            return
+
+        wc, wr = self.path[self.path_index]
+
+        if self.waiting:
+            blocker = self._get_blocker(pieces, wc, wr)
+            if blocker is None:
+                self.waiting = False
+            else:
+                return
+
+        tx, ty = float(wc * TILE), float(wr * TILE)
         dx = tx - self.pixel_x
         dy = ty - self.pixel_y
         dist = math.hypot(dx, dy)
-        step = PIECE_SPEED * TILE * dt  # pixels this frame
+        step = PIECE_SPEED * TILE * dt
 
         if dist <= step:
-            if self._target_occupied(pieces):
-                self._cancel_move()
-            else:
-                self.pixel_x = tx
-                self.pixel_y = ty
+            blocker = self._get_blocker(pieces, wc, wr)
+            if blocker is not None:
+                self.pixel_x = float(self.col * TILE)
+                self.pixel_y = float(self.row * TILE)
+                if blocker.color != self.color:
+                    self.waiting = True
+                else:
+                    self.moving = False
+                    self.path = []
+                return
+
+            self.pixel_x = tx
+            self.pixel_y = ty
+            self.col = wc
+            self.row = wr
+            self.path_index += 1
+
+            if self.path_index >= len(self.path):
                 self._finish_move()
         else:
             self.pixel_x += dx / dist * step
@@ -149,18 +198,41 @@ class Piece:
             t = min(self.knight_timer / self.knight_duration, 1.0)
             self.knight_alpha = int(255 * (1 - t))
             if t >= 1.0:
-                if self._target_occupied(pieces):
-                    # Target blocked – fade back in on origin tile
-                    self.pixel_x = float(self.origin_col * TILE)
-                    self.pixel_y = float(self.origin_row * TILE)
-                    self.target_col = self.origin_col
-                    self.target_row = self.origin_row
+                blocker = self._get_blocker(pieces, self.target_col, self.target_row)
+                if blocker is not None:
+                    if blocker.color != self.color:
+                        self.knight_phase = "waiting"
+                        self.knight_alpha = 0
+                        self.waiting = True
+                    else:
+                        self.pixel_x = float(self.origin_col * TILE)
+                        self.pixel_y = float(self.origin_row * TILE)
+                        self.col = self.origin_col
+                        self.row = self.origin_row
+                        self.knight_phase = "fadein"
+                        self.knight_timer = 0.0
+                        self.knight_alpha = 0
+                        self.path = [(self.origin_col, self.origin_row)]
+                        self.path_index = 0
                 else:
                     self.pixel_x = float(self.target_col * TILE)
                     self.pixel_y = float(self.target_row * TILE)
+                    self.col = self.target_col
+                    self.row = self.target_row
+                    self.knight_phase = "fadein"
+                    self.knight_timer = 0.0
+                    self.knight_alpha = 0
+        elif self.knight_phase == "waiting":
+            blocker = self._get_blocker(pieces, self.target_col, self.target_row)
+            if blocker is None:
+                self.pixel_x = float(self.target_col * TILE)
+                self.pixel_y = float(self.target_row * TILE)
+                self.col = self.target_col
+                self.row = self.target_row
                 self.knight_phase = "fadein"
                 self.knight_timer = 0.0
                 self.knight_alpha = 0
+                self.waiting = False
         elif self.knight_phase == "fadein":
             t = min(self.knight_timer / self.knight_duration, 1.0)
             self.knight_alpha = int(255 * t)
@@ -171,27 +243,34 @@ class Piece:
 
     # ------------------------------------------------------------------
     def _finish_move(self):
-        moved = (self.col != self.target_col or self.row != self.target_row)
-        self.col = self.target_col
-        self.row = self.target_row
+        moved = (self.col != self.origin_col or self.row != self.origin_row)
         self.moving = False
+        self.waiting = False
+        self.path = []
+        self.path_index = 0
         if moved:
             self.has_moved = True
 
-    def _target_occupied(self, pieces):
-        """True if any other alive piece sits on the target tile."""
+    def _get_blocker(self, pieces, col, row):
+        """Return the alive piece sitting on (col, row), or None."""
         for q in pieces:
-            if q is not self and q.alive and q.col == self.target_col and q.row == self.target_row:
-                return True
-        return False
+            if q is not self and q.alive and q.col == col and q.row == row:
+                return q
+        return None
 
-    def _cancel_move(self):
-        """Snap back to origin – target was occupied on arrival."""
-        self.pixel_x = float(self.origin_col * TILE)
-        self.pixel_y = float(self.origin_row * TILE)
-        self.target_col = self.origin_col
-        self.target_row = self.origin_row
+    def stop(self):
+        """Stop movement, snap to current logical tile."""
+        self.pixel_x = float(self.col * TILE)
+        self.pixel_y = float(self.row * TILE)
+        self.target_col = self.col
+        self.target_row = self.row
         self.moving = False
+        self.waiting = False
+        self.path = []
+        self.path_index = 0
+        if self.name == "Knight":
+            self.knight_phase = None
+            self.knight_alpha = 255
 
     # ------------------------------------------------------------------
     def draw(self, surface, images):
@@ -204,6 +283,27 @@ class Piece:
         surface.blit(img, (self.pixel_x, self.pixel_y))
         # health bar
         self._draw_hp(surface)
+        # stop button for moving pieces
+        if self.moving:
+            self._draw_stop_btn(surface)
+
+    def _draw_stop_btn(self, surface):
+        cx = int(self.pixel_x + TILE - STOP_BTN_RADIUS - 2)
+        cy = int(self.pixel_y + STOP_BTN_RADIUS + 2)
+        pygame.draw.circle(surface, (200, 40, 40), (cx, cy), STOP_BTN_RADIUS)
+        m = 4
+        pygame.draw.line(surface, (255, 255, 255),
+                         (cx - m, cy - m), (cx + m, cy + m), 2)
+        pygame.draw.line(surface, (255, 255, 255),
+                         (cx + m, cy - m), (cx - m, cy + m), 2)
+
+    def stop_btn_hit(self, mx, my):
+        """Return True if (mx, my) hits this piece's stop button."""
+        if not self.moving or not self.alive:
+            return False
+        cx = self.pixel_x + TILE - STOP_BTN_RADIUS - 2
+        cy = self.pixel_y + STOP_BTN_RADIUS + 2
+        return math.hypot(mx - cx, my - cy) <= STOP_BTN_RADIUS
 
     def _draw_hp(self, surface):
         bar_w = TILE - 10
@@ -367,32 +467,26 @@ def _path_tiles(piece):
 # ---------------------------------------------------------------------------
 
 def process_combat(pieces, dt):
-    """
-    For every piece, collect the set of tiles it 'threatens':
-      - its current tile
-      - if moving, its next (target) tile
-    If any enemy piece's next_tile is in that set, deal damage.
-    Symmetric: both can damage each other.
-    """
+    """Only the defending piece takes damage.  An attacker is a moving piece
+    whose next_tile equals the defender's current_tile."""
     damage_per_frame = DAMAGE_PER_SECOND * dt
 
-    for p in pieces:
-        if not p.alive:
+    for attacker in pieces:
+        if not attacker.alive or not attacker.moving:
             continue
-        # Tiles this piece occupies / claims
-        my_tiles = {p.current_tile}
-        if p.next_tile:
-            my_tiles.add(p.next_tile)
-
-        for q in pieces:
-            if q is p or not q.alive or q.color == p.color:
+        target_tile = attacker.next_tile
+        if target_tile is None:
+            continue
+        for defender in pieces:
+            if defender is attacker or not defender.alive:
                 continue
-            # Opponent q's next_tile collides with one of my tiles?
-            if q.next_tile and q.next_tile in my_tiles:
-                q.hp -= damage_per_frame
-                if q.hp <= 0:
-                    q.hp = 0
-                    q.alive = False
+            if defender.color == attacker.color:
+                continue
+            if defender.current_tile == target_tile:
+                defender.hp -= damage_per_frame
+                if defender.hp <= 0:
+                    defender.hp = 0
+                    defender.alive = False
 
 
 # ---------------------------------------------------------------------------
@@ -472,6 +566,19 @@ def main():
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not game_over:
                 mx, my = event.pos
+
+                # Check stop buttons first
+                stop_hit = False
+                for p in pieces:
+                    if p.stop_btn_hit(mx, my):
+                        p.stop()
+                        stop_hit = True
+                        break
+                if stop_hit:
+                    selected = None
+                    legal_targets = []
+                    continue
+
                 click_col = mx // TILE
                 click_row = my // TILE
                 if not in_bounds(click_col, click_row):
