@@ -73,11 +73,12 @@ class Piece:
         self.pixel_y = float(row * TILE)
         self.origin_col = col
         self.origin_row = row
-        # For knight: fade-out / fade-in animation
-        self.knight_phase = None     # None | "fadeout" | "fadein"
-        self.knight_alpha = 255
+        # For knight: simultaneous fade-out / fade-in animation
+        self.knight_phase = None     # None | "crossfade" | "waiting"
+        self.knight_alpha = 255      # alpha at origin (fading out)
+        self.knight_dest_alpha = 0   # alpha at destination (fading in)
         self.knight_timer = 0.0
-        self.knight_duration = 0.0   # seconds for half of the animation
+        self.knight_duration = 0.0   # seconds for the whole crossfade
 
         self.path = []               # list of (col, row) waypoints
         self.path_index = 0
@@ -111,10 +112,11 @@ class Piece:
         if self.name == "Knight":
             dist = 3.0
             total_time = dist / PIECE_SPEED
-            self.knight_duration = total_time / 2.0
-            self.knight_phase = "fadeout"
+            self.knight_duration = total_time
+            self.knight_phase = "crossfade"
             self.knight_timer = 0.0
             self.knight_alpha = 255
+            self.knight_dest_alpha = 0
 
     def _compute_path(self):
         """Compute waypoints from current position to target (excluding current tile)."""
@@ -154,13 +156,22 @@ class Piece:
 
         wc, wr = self.path[self.path_index]
 
-        if self.waiting:
-            blocker = self._get_blocker(pieces, wc, wr)
-            if blocker is None:
-                self.waiting = False
+        # Check blocker BEFORE moving any pixels
+        blocker = self._get_blocker(pieces, wc, wr)
+        if blocker is not None:
+            # Snap back to current tile center – never overlap
+            self.pixel_x = float(self.col * TILE)
+            self.pixel_y = float(self.row * TILE)
+            if blocker.color != self.color:
+                self.waiting = True
             else:
-                return
+                self.moving = False
+                self.waiting = False
+                self.path = []
+            return
 
+        # Tile is free – allowed to slide towards it
+        self.waiting = False
         tx, ty = float(wc * TILE), float(wr * TILE)
         dx = tx - self.pixel_x
         dy = ty - self.pixel_y
@@ -168,17 +179,6 @@ class Piece:
         step = PIECE_SPEED * TILE * dt
 
         if dist <= step:
-            blocker = self._get_blocker(pieces, wc, wr)
-            if blocker is not None:
-                self.pixel_x = float(self.col * TILE)
-                self.pixel_y = float(self.row * TILE)
-                if blocker.color != self.color:
-                    self.waiting = True
-                else:
-                    self.moving = False
-                    self.path = []
-                return
-
             self.pixel_x = tx
             self.pixel_y = ty
             self.col = wc
@@ -194,34 +194,41 @@ class Piece:
     # ------------------------------------------------------------------
     def _update_knight(self, dt, pieces):
         self.knight_timer += dt
-        if self.knight_phase == "fadeout":
+        if self.knight_phase == "crossfade":
             t = min(self.knight_timer / self.knight_duration, 1.0)
-            self.knight_alpha = int(255 * (1 - t))
+            self.knight_alpha = int(255 * (1 - t))      # origin fades out
+            self.knight_dest_alpha = int(255 * t)        # target fades in
             if t >= 1.0:
                 blocker = self._get_blocker(pieces, self.target_col, self.target_row)
                 if blocker is not None:
                     if blocker.color != self.color:
+                        # Wait for enemy to die / move
                         self.knight_phase = "waiting"
                         self.knight_alpha = 0
+                        self.knight_dest_alpha = 0
                         self.waiting = True
                     else:
+                        # Friendly blocker – snap back to origin
                         self.pixel_x = float(self.origin_col * TILE)
                         self.pixel_y = float(self.origin_row * TILE)
                         self.col = self.origin_col
                         self.row = self.origin_row
-                        self.knight_phase = "fadein"
-                        self.knight_timer = 0.0
-                        self.knight_alpha = 0
-                        self.path = [(self.origin_col, self.origin_row)]
-                        self.path_index = 0
+                        self.knight_phase = None
+                        self.knight_alpha = 255
+                        self.knight_dest_alpha = 0
+                        self.moving = False
+                        self.waiting = False
+                        self.path = []
                 else:
+                    # Arrived
                     self.pixel_x = float(self.target_col * TILE)
                     self.pixel_y = float(self.target_row * TILE)
                     self.col = self.target_col
                     self.row = self.target_row
-                    self.knight_phase = "fadein"
-                    self.knight_timer = 0.0
-                    self.knight_alpha = 0
+                    self.knight_phase = None
+                    self.knight_alpha = 255
+                    self.knight_dest_alpha = 0
+                    self._finish_move()
         elif self.knight_phase == "waiting":
             blocker = self._get_blocker(pieces, self.target_col, self.target_row)
             if blocker is None:
@@ -229,16 +236,10 @@ class Piece:
                 self.pixel_y = float(self.target_row * TILE)
                 self.col = self.target_col
                 self.row = self.target_row
-                self.knight_phase = "fadein"
-                self.knight_timer = 0.0
-                self.knight_alpha = 0
-                self.waiting = False
-        elif self.knight_phase == "fadein":
-            t = min(self.knight_timer / self.knight_duration, 1.0)
-            self.knight_alpha = int(255 * t)
-            if t >= 1.0:
-                self.knight_alpha = 255
                 self.knight_phase = None
+                self.knight_alpha = 255
+                self.knight_dest_alpha = 0
+                self.waiting = False
                 self._finish_move()
 
     # ------------------------------------------------------------------
@@ -271,21 +272,56 @@ class Piece:
         if self.name == "Knight":
             self.knight_phase = None
             self.knight_alpha = 255
+            self.knight_dest_alpha = 0
 
     # ------------------------------------------------------------------
     def draw(self, surface, images):
         if not self.alive:
             return
         img = images[self.color][self.name]
-        if self.name == "Knight" and self.knight_phase is not None:
-            img = img.copy()
-            img.set_alpha(self.knight_alpha)
-        surface.blit(img, (self.pixel_x, self.pixel_y))
+
+        if self.name == "Knight" and self.knight_phase == "crossfade":
+            # Draw fading-out copy at origin
+            origin_img = img.copy()
+            origin_img.set_alpha(self.knight_alpha)
+            surface.blit(origin_img, (self.origin_col * TILE, self.origin_row * TILE))
+            # Draw fading-in copy at target
+            dest_img = img.copy()
+            dest_img.set_alpha(self.knight_dest_alpha)
+            surface.blit(dest_img, (self.target_col * TILE, self.target_row * TILE))
+        elif self.name == "Knight" and self.knight_phase == "waiting":
+            # Knight invisible during wait – draw nothing (arrow will show)
+            pass
+        else:
+            surface.blit(img, (self.pixel_x, self.pixel_y))
+
         # health bar
         self._draw_hp(surface)
+        # attack arrow when waiting
+        if self.waiting and self.next_tile:
+            self._draw_attack_arrow(surface)
         # stop button for moving pieces
         if self.moving:
             self._draw_stop_btn(surface)
+
+    def _draw_attack_arrow(self, surface):
+        """Draw a red arrow from the piece's tile center to the enemy tile center."""
+        sx = self.col * TILE + TILE // 2
+        sy = self.row * TILE + TILE // 2
+        nt = self.next_tile
+        if nt is None:
+            return
+        ex = nt[0] * TILE + TILE // 2
+        ey = nt[1] * TILE + TILE // 2
+        color = (220, 30, 30)
+        pygame.draw.line(surface, color, (sx, sy), (ex, ey), 3)
+        # arrowhead
+        angle = math.atan2(ey - sy, ex - sx)
+        head_len = 14
+        for offset in (2.5, -2.5):
+            hx = ex - head_len * math.cos(angle + offset * 0.18 + 0.35 * (1 if offset > 0 else -1))
+            hy = ey - head_len * math.sin(angle + offset * 0.18 + 0.35 * (1 if offset > 0 else -1))
+            pygame.draw.line(surface, color, (ex, ey), (int(hx), int(hy)), 3)
 
     def _draw_stop_btn(self, surface):
         cx = int(self.pixel_x + TILE - STOP_BTN_RADIUS - 2)
