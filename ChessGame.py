@@ -84,6 +84,7 @@ class Piece:
         self.path = []               # list of (col, row) waypoints
         self.path_index = 0
         self.waiting = False         # True if blocked by enemy, waiting to proceed
+        self.attack_target = None     # ref to the piece being attacked (for pawn diagonal check)
 
         self.has_moved = False       # for pawn double-step
 
@@ -168,16 +169,32 @@ class Piece:
                 self.moving = False
                 self.waiting = False
                 self.path = []
+                self.attack_target = None
             elif blocker.color != self.color:
                 self.waiting = True
+                self.attack_target = blocker
             else:
                 self.moving = False
                 self.waiting = False
                 self.path = []
+                self.attack_target = None
             return
+
+        # Tile is free – check if pawn diagonal attack failed (defender survived)
+        if self.waiting and self.name == "Pawn" and wc != self.col:
+            if self.attack_target is not None and self.attack_target.alive:
+                # Defender survived and moved away – pawn cannot proceed diagonally
+                self.pixel_x = float(self.col * TILE)
+                self.pixel_y = float(self.row * TILE)
+                self.moving = False
+                self.waiting = False
+                self.path = []
+                self.attack_target = None
+                return
 
         # Tile is free – allowed to slide towards it
         self.waiting = False
+        self.attack_target = None
         tx, ty = float(wc * TILE), float(wr * TILE)
         dx = tx - self.pixel_x
         dy = ty - self.pixel_y
@@ -253,6 +270,7 @@ class Piece:
         moved = (self.col != self.origin_col or self.row != self.origin_row)
         self.moving = False
         self.waiting = False
+        self.attack_target = None
         self.path = []
         self.path_index = 0
         if moved:
@@ -273,6 +291,7 @@ class Piece:
         self.target_row = self.row
         self.moving = False
         self.waiting = False
+        self.attack_target = None
         self.path = []
         self.path_index = 0
         if self.name == "Knight":
@@ -662,23 +681,27 @@ def main():
                     continue
 
                 # Did we click on a legal target?
-                if selected and (click_col, click_row) in legal_targets:
+                # First check if there's a friendly piece on this tile – always re-select it
+                clicked_piece = None
+                for p in pieces:
+                    if p.alive and not p.moving and p.col == click_col and p.row == click_row:
+                        clicked_piece = p
+                        break
+
+                if clicked_piece and (clicked_piece is selected or clicked_piece.color == (selected.color if selected else None)):
+                    # Re-select (reevaluate moves) on every click
+                    selected = clicked_piece
+                    legal_targets = get_legal_targets(clicked_piece, pieces)
+                elif selected and (click_col, click_row) in legal_targets:
                     selected.start_move(click_col, click_row)
                     selected = None
                     legal_targets = []
+                elif clicked_piece:
+                    selected = clicked_piece
+                    legal_targets = get_legal_targets(clicked_piece, pieces)
                 else:
-                    # Try to select a piece at this tile
-                    clicked_piece = None
-                    for p in pieces:
-                        if p.alive and not p.moving and p.col == click_col and p.row == click_row:
-                            clicked_piece = p
-                            break
-                    if clicked_piece:
-                        selected = clicked_piece
-                        legal_targets = get_legal_targets(clicked_piece, pieces)
-                    else:
-                        selected = None
-                        legal_targets = []
+                    selected = None
+                    legal_targets = []
 
         if not game_over:
             # --- Update movement ---
