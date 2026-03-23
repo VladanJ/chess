@@ -16,6 +16,7 @@ LIGHT_COLOR = (240, 217, 181)
 DARK_COLOR = (181, 136, 99)
 HIGHLIGHT_COLOR = (186, 202, 68, 150)
 MOVE_DOT_COLOR = (100, 100, 100, 160)
+ATTACK_DOT_COLOR = (220, 30, 30, 200)
 
 PIECE_SPEED = 0.2  # tiles per second (same for every piece – slow RTS pace)
 
@@ -162,7 +163,12 @@ class Piece:
             # Snap back to current tile center – never overlap
             self.pixel_x = float(self.col * TILE)
             self.pixel_y = float(self.row * TILE)
-            if blocker.color != self.color:
+            # Pawns can only attack diagonally, never forward
+            if self.name == "Pawn" and wc == self.col:
+                self.moving = False
+                self.waiting = False
+                self.path = []
+            elif blocker.color != self.color:
                 self.waiting = True
             else:
                 self.moving = False
@@ -297,12 +303,32 @@ class Piece:
 
         # health bar
         self._draw_hp(surface)
-        # attack arrow when waiting
+        # blue movement arrow from origin to final target while moving
+        if self.moving and not self.waiting:
+            self._draw_move_arrow(surface)
+        # red attack arrow when waiting
         if self.waiting and self.next_tile:
             self._draw_attack_arrow(surface)
         # stop button for moving pieces
         if self.moving:
             self._draw_stop_btn(surface)
+
+    def _draw_move_arrow(self, surface):
+        """Draw a blue arrow from the starting tile center to the final target tile center."""
+        sx = self.origin_col * TILE + TILE // 2
+        sy = self.origin_row * TILE + TILE // 2
+        ex = self.target_col * TILE + TILE // 2
+        ey = self.target_row * TILE + TILE // 2
+        if sx == ex and sy == ey:
+            return
+        color = (40, 100, 220)
+        pygame.draw.line(surface, color, (sx, sy), (ex, ey), 3)
+        angle = math.atan2(ey - sy, ex - sx)
+        head_len = 14
+        for sign in (1, -1):
+            hx = ex - head_len * math.cos(angle + sign * 0.45)
+            hy = ey - head_len * math.sin(angle + sign * 0.45)
+            pygame.draw.line(surface, color, (ex, ey), (int(hx), int(hy)), 3)
 
     def _draw_attack_arrow(self, surface):
         """Draw a red arrow from the piece's tile center to the enemy tile center."""
@@ -555,20 +581,33 @@ def draw_board(surface):
             pygame.draw.rect(surface, color, (c * TILE, r * TILE, TILE, TILE))
 
 
-def draw_highlights(surface, selected, legal_targets):
+def draw_highlights(surface, selected, legal_targets, pieces):
     if selected is None:
         return
     # highlight selected tile
     hs = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
     hs.fill(HIGHLIGHT_COLOR)
     surface.blit(hs, (selected.col * TILE, selected.row * TILE))
-    # draw legal move dots
+    # draw legal move dots (grey for empty tiles only)
     for (tc, tr) in legal_targets:
-        cx = tc * TILE + TILE // 2
-        cy = tr * TILE + TILE // 2
+        occ = _any_piece_at(pieces, tc, tr, exclude=selected)
+        if occ and occ.color != selected.color:
+            continue  # attack targets drawn later on top of pieces
         dot = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
         pygame.draw.circle(dot, MOVE_DOT_COLOR, (TILE // 2, TILE // 2), 15)
         surface.blit(dot, (tc * TILE, tr * TILE))
+
+
+def draw_attack_dots(surface, selected, legal_targets, pieces):
+    """Draw red dots over enemy pieces that can be attacked."""
+    if selected is None:
+        return
+    for (tc, tr) in legal_targets:
+        occ = _any_piece_at(pieces, tc, tr, exclude=selected)
+        if occ and occ.color != selected.color:
+            dot = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+            pygame.draw.circle(dot, ATTACK_DOT_COLOR, (TILE // 2, TILE // 2), 18)
+            surface.blit(dot, (tc * TILE, tr * TILE))
 
 
 # ---------------------------------------------------------------------------
@@ -662,11 +701,14 @@ def main():
 
         # --- Draw ---
         draw_board(screen)
-        draw_highlights(screen, selected, legal_targets)
+        draw_highlights(screen, selected, legal_targets, pieces)
 
         # Draw pieces (alive only)
         for p in pieces:
             p.draw(screen, images)
+
+        # Draw attack dots over enemy pieces
+        draw_attack_dots(screen, selected, legal_targets, pieces)
 
         # Status bar
         status_rect = pygame.Rect(0, TILE * BOARD, WIDTH, 40)
