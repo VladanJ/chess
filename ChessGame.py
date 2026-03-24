@@ -171,11 +171,7 @@ class Piece:
             return
 
         # Check for enemy occupying the target tile
-        # Pawns only stop for stationary enemies (they keep moving if just attacked)
-        if self.name == "Pawn":
-            enemy = self._get_stationary_enemy(pieces, wc, wr)
-        else:
-            enemy = self._get_enemy_on_tile(pieces, wc, wr)
+        enemy = self._get_enemy_on_tile(pieces, wc, wr)
         if enemy is not None:
             # Snap to current tile center — wait and attack
             self.pixel_x = float(self.col * TILE)
@@ -207,6 +203,17 @@ class Piece:
                 self.waiting = False
                 self.path = []
                 self.attack_target = None
+                return
+
+        # Head-on collision: enemy heading toward our current tile
+        # while we head toward theirs — mutual combat, stay and fight
+        for q in pieces:
+            if (q is not self and q.alive and q.color != self.color
+                    and q.moving and q.next_tile == (self.col, self.row)):
+                self.pixel_x = float(self.col * TILE)
+                self.pixel_y = float(self.row * TILE)
+                self.waiting = True
+                self.attack_target = q
                 return
 
         # Tile is free — slide towards it
@@ -557,8 +564,9 @@ def _any_piece_at(pieces, col, row, exclude=None, include_next=False):
 
 
 def _pawn_path_clear(pieces, piece, tc, tr):
-    """For pawn forward moves, the target must not contain ANY piece."""
-    occ = _any_piece_at(pieces, tc, tr, exclude=piece)
+    """For pawn forward moves, the target must not contain ANY piece
+    (including pieces mid-slide whose next_tile is this square)."""
+    occ = _any_piece_at(pieces, tc, tr, exclude=piece, include_next=True)
     return occ is None
 
 
@@ -614,6 +622,9 @@ def process_combat(pieces, dt):
             continue
         target_tile = attacker.next_tile
         if target_tile is None:
+            continue
+        # Pawns only deal damage diagonally, never forward
+        if attacker.name == "Pawn" and target_tile[0] == attacker.col:
             continue
         for defender in pieces:
             if defender is attacker or not defender.alive:
