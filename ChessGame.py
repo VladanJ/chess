@@ -191,6 +191,12 @@ class Piece:
                 self.attack_target = enemy
             return
 
+        # Target still sliding away but hasn't reached the next tile yet —
+        # keep dealing damage until it fully leaves.
+        if self.waiting and self.attack_target is not None and self.attack_target.alive:
+            if self.attack_target.col == wc and self.attack_target.row == wr:
+                return  # defender still on this tile — maintain attack
+
         # Tile is completely free of enemies
         # Check if pawn diagonal attack failed (defender survived and left)
         if self.waiting and self.name == "Pawn" and wc != self.col:
@@ -778,12 +784,12 @@ def main():
                     legal_targets = []
 
         if not game_over:
+            # --- Combat (before movement so damage applies until 100% arrival) ---
+            process_combat(pieces, dt)
+
             # --- Update movement ---
             for p in pieces:
                 p.update(dt, pieces)
-
-            # --- Combat ---
-            process_combat(pieces, dt)
 
             # --- Check game over ---
             for p in pieces:
