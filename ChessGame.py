@@ -18,7 +18,7 @@ HIGHLIGHT_COLOR = (186, 202, 68, 150)
 MOVE_DOT_COLOR = (100, 100, 100, 160)
 ATTACK_DOT_COLOR = (220, 30, 30, 200)
 
-PIECE_SPEED = 1  # tiles per second (same for every piece – slow RTS pace)
+PIECE_SPEED = 0.3  # tiles per second (same for every piece – slow RTS pace)
 
 HP_MAP = {
     "Pawn": 100,
@@ -171,7 +171,12 @@ class Piece:
             return
 
         # Check for enemy occupying the target tile
-        enemy = self._get_enemy_on_tile(pieces, wc, wr)
+        # Pawns moving forward only stop for stationary enemies (they keep
+        # sliding and take damage if the attacker is moving toward them).
+        if self.name == "Pawn" and wc == self.col:
+            enemy = self._get_stationary_enemy(pieces, wc, wr)
+        else:
+            enemy = self._get_enemy_on_tile(pieces, wc, wr)
         if enemy is not None:
             # Snap to current tile center — wait and attack
             self.pixel_x = float(self.col * TILE)
@@ -206,15 +211,17 @@ class Piece:
                 return
 
         # Head-on collision: enemy heading toward our current tile
-        # while we head toward theirs — mutual combat, stay and fight
-        for q in pieces:
-            if (q is not self and q.alive and q.color != self.color
-                    and q.moving and q.next_tile == (self.col, self.row)):
-                self.pixel_x = float(self.col * TILE)
-                self.pixel_y = float(self.row * TILE)
-                self.waiting = True
-                self.attack_target = q
-                return
+        # while we head toward theirs — mutual combat, stay and fight.
+        # Pawns moving forward (same column) keep sliding instead.
+        if not (self.name == "Pawn" and wc == self.col):
+            for q in pieces:
+                if (q is not self and q.alive and q.color != self.color
+                        and q.moving and q.next_tile == (self.col, self.row)):
+                    self.pixel_x = float(self.col * TILE)
+                    self.pixel_y = float(self.row * TILE)
+                    self.waiting = True
+                    self.attack_target = q
+                    return
 
         # Tile is free — slide towards it
         self.waiting = False
