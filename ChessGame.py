@@ -18,7 +18,7 @@ HIGHLIGHT_COLOR = (186, 202, 68, 150)
 MOVE_DOT_COLOR = (100, 100, 100, 160)
 ATTACK_DOT_COLOR = (220, 30, 30, 200)
 
-PIECE_SPEED = 0.2  # tiles per second (same for every piece – slow RTS pace)
+PIECE_SPEED = 1  # tiles per second (same for every piece – slow RTS pace)
 
 HP_MAP = {
     "Pawn": 100,
@@ -158,10 +158,26 @@ class Piece:
 
         wc, wr = self.path[self.path_index]
 
-        # Check blocker BEFORE moving any pixels
+        # Check for friendly blocker BEFORE moving any pixels
         blocker = self._get_blocker(pieces, wc, wr)
         if blocker is not None:
-            # Snap back to current tile center – never overlap
+            # Friendly piece blocks — cancel movement
+            self.pixel_x = float(self.col * TILE)
+            self.pixel_y = float(self.row * TILE)
+            self.moving = False
+            self.waiting = False
+            self.path = []
+            self.attack_target = None
+            return
+
+        # Check for enemy occupying the target tile
+        # Pawns only stop for stationary enemies (they keep moving if just attacked)
+        if self.name == "Pawn":
+            enemy = self._get_stationary_enemy(pieces, wc, wr)
+        else:
+            enemy = self._get_enemy_on_tile(pieces, wc, wr)
+        if enemy is not None:
+            # Snap to current tile center — wait and attack
             self.pixel_x = float(self.col * TILE)
             self.pixel_y = float(self.row * TILE)
             # Pawns can only attack diagonally, never forward
@@ -170,20 +186,15 @@ class Piece:
                 self.waiting = False
                 self.path = []
                 self.attack_target = None
-            elif blocker.color != self.color:
-                self.waiting = True
-                self.attack_target = blocker
             else:
-                self.moving = False
-                self.waiting = False
-                self.path = []
-                self.attack_target = None
+                self.waiting = True
+                self.attack_target = enemy
             return
 
-        # Tile is free – check if pawn diagonal attack failed (defender survived)
+        # Tile is completely free of enemies
+        # Check if pawn diagonal attack failed (defender survived and left)
         if self.waiting and self.name == "Pawn" and wc != self.col:
             if self.attack_target is not None and self.attack_target.alive:
-                # Defender survived and moved away – pawn cannot proceed diagonally
                 self.pixel_x = float(self.col * TILE)
                 self.pixel_y = float(self.row * TILE)
                 self.moving = False
@@ -192,7 +203,7 @@ class Piece:
                 self.attack_target = None
                 return
 
-        # Tile is free – allowed to slide towards it
+        # Tile is free — slide towards it
         self.waiting = False
         self.attack_target = None
         tx, ty = float(wc * TILE), float(wr * TILE)
@@ -222,26 +233,27 @@ class Piece:
             self.knight_alpha = int(255 * (1 - t))      # origin fades out
             self.knight_dest_alpha = int(255 * t)        # target fades in
             if t >= 1.0:
-                blocker = self._get_blocker(pieces, self.target_col, self.target_row)
-                if blocker is not None:
-                    if blocker.color != self.color:
-                        # Wait for enemy to die / move
-                        self.knight_phase = "waiting"
-                        self.knight_alpha = 0
-                        self.knight_dest_alpha = 0
-                        self.waiting = True
-                    else:
-                        # Friendly blocker – snap back to origin
-                        self.pixel_x = float(self.origin_col * TILE)
-                        self.pixel_y = float(self.origin_row * TILE)
-                        self.col = self.origin_col
-                        self.row = self.origin_row
-                        self.knight_phase = None
-                        self.knight_alpha = 255
-                        self.knight_dest_alpha = 0
-                        self.moving = False
-                        self.waiting = False
-                        self.path = []
+                friendly = self._get_blocker(pieces, self.target_col, self.target_row)
+                enemy = self._get_enemy_on_tile(pieces, self.target_col, self.target_row)
+                if friendly is not None:
+                    # Friendly blocker – snap back to origin
+                    self.pixel_x = float(self.origin_col * TILE)
+                    self.pixel_y = float(self.origin_row * TILE)
+                    self.col = self.origin_col
+                    self.row = self.origin_row
+                    self.knight_phase = None
+                    self.knight_alpha = 255
+                    self.knight_dest_alpha = 0
+                    self.moving = False
+                    self.waiting = False
+                    self.path = []
+                elif enemy is not None:
+                    # Wait for enemy to die / move
+                    self.knight_phase = "waiting"
+                    self.knight_alpha = 0
+                    self.knight_dest_alpha = 0
+                    self.waiting = True
+                    self.attack_target = enemy
                 else:
                     # Arrived
                     self.pixel_x = float(self.target_col * TILE)
@@ -253,8 +265,21 @@ class Piece:
                     self.knight_dest_alpha = 0
                     self._finish_move()
         elif self.knight_phase == "waiting":
-            blocker = self._get_blocker(pieces, self.target_col, self.target_row)
-            if blocker is None:
+            friendly = self._get_blocker(pieces, self.target_col, self.target_row)
+            enemy = self._get_enemy_on_tile(pieces, self.target_col, self.target_row)
+            if friendly is not None:
+                # Friendly moved in – cancel
+                self.pixel_x = float(self.origin_col * TILE)
+                self.pixel_y = float(self.origin_row * TILE)
+                self.col = self.origin_col
+                self.row = self.origin_row
+                self.knight_phase = None
+                self.knight_alpha = 255
+                self.knight_dest_alpha = 0
+                self.moving = False
+                self.waiting = False
+                self.path = []
+            elif enemy is None:
                 self.pixel_x = float(self.target_col * TILE)
                 self.pixel_y = float(self.target_row * TILE)
                 self.col = self.target_col
@@ -277,10 +302,32 @@ class Piece:
             self.has_moved = True
 
     def _get_blocker(self, pieces, col, row):
-        """Return the alive piece sitting on (col, row), or None."""
+        """Return an alive same-color piece sitting on or sliding through (col, row).
+        Enemy pieces do NOT block — they are handled via the combat system."""
         for q in pieces:
-            if q is not self and q.alive and q.col == col and q.row == row:
-                return q
+            if q is not self and q.alive and q.color == self.color:
+                if q.col == col and q.row == row:
+                    return q
+                if q.moving and q.next_tile == (col, row):
+                    return q
+        return None
+
+    def _get_enemy_on_tile(self, pieces, col, row):
+        """Return an alive enemy whose current or next tile is (col, row), or None."""
+        for q in pieces:
+            if q is not self and q.alive and q.color != self.color:
+                if q.col == col and q.row == row:
+                    return q
+                if q.moving and q.next_tile == (col, row):
+                    return q
+        return None
+
+    def _get_stationary_enemy(self, pieces, col, row):
+        """Return an alive non-moving enemy sitting on (col, row), or None."""
+        for q in pieces:
+            if q is not self and q.alive and q.color != self.color:
+                if q.col == col and q.row == row and not q.moving:
+                    return q
         return None
 
     def stop(self):
@@ -419,7 +466,7 @@ def occupied_by(pieces, col, row):
 
 
 def tile_blocked_by_own(pieces, piece, col, row):
-    """True if a friendly piece currently occupies or is moving to (col, row)."""
+    """True if a friendly piece currently occupies or is moving through (col, row)."""
     for p in pieces:
         if p is piece or not p.alive:
             continue
@@ -428,6 +475,8 @@ def tile_blocked_by_own(pieces, piece, col, row):
         if (p.col == col and p.row == row):
             return True
         if p.moving and p.target_col == col and p.target_row == row:
+            return True
+        if p.moving and p.next_tile == (col, row):
             return True
     return True if not in_bounds(col, row) else False
 
@@ -454,11 +503,11 @@ def get_legal_targets(piece, pieces):
                 fc2, fr2 = c, r + 2 * direction
                 if in_bounds(fc2, fr2) and _pawn_path_clear(pieces, piece, fc2, fr2):
                     add(fc2, fr2)
-        # diagonal captures – allowed only if opponent occupies that tile
+        # diagonal captures – allowed if opponent occupies that tile or is sliding through it
         for dc in (-1, 1):
             tc, tr = c + dc, r + direction
             if in_bounds(tc, tr):
-                occ = _any_piece_at(pieces, tc, tr, exclude=piece)
+                occ = _any_piece_at(pieces, tc, tr, exclude=piece, include_next=True)
                 if occ and occ.color != piece.color:
                     add(tc, tr)
 
@@ -490,11 +539,13 @@ def get_legal_targets(piece, pieces):
     return targets
 
 
-def _any_piece_at(pieces, col, row, exclude=None):
+def _any_piece_at(pieces, col, row, exclude=None, include_next=False):
     for p in pieces:
         if p is exclude or not p.alive:
             continue
         if p.col == col and p.row == row:
+            return p
+        if include_next and p.moving and p.next_tile == (col, row):
             return p
     return None
 
@@ -549,7 +600,7 @@ def _path_tiles(piece):
 
 def process_combat(pieces, dt):
     """Only the defending piece takes damage.  An attacker is a moving piece
-    whose next_tile equals the defender's current_tile."""
+    whose next_tile equals any tile the defender occupies (current or mid-slide)."""
     damage_per_frame = DAMAGE_PER_SECOND * dt
 
     for attacker in pieces:
@@ -563,7 +614,11 @@ def process_combat(pieces, dt):
                 continue
             if defender.color == attacker.color:
                 continue
-            if defender.current_tile == target_tile:
+            # Defender occupies both its current tile and (if mid-slide) its next tile
+            defender_tiles = {defender.current_tile}
+            if defender.moving and defender.next_tile:
+                defender_tiles.add(defender.next_tile)
+            if target_tile in defender_tiles:
                 defender.hp -= damage_per_frame
                 if defender.hp <= 0:
                     defender.hp = 0
@@ -609,21 +664,40 @@ def draw_highlights(surface, selected, legal_targets, pieces):
     surface.blit(hs, (selected.col * TILE, selected.row * TILE))
     # draw legal move dots (grey for empty tiles only)
     for (tc, tr) in legal_targets:
-        occ = _any_piece_at(pieces, tc, tr, exclude=selected)
-        if occ and occ.color != selected.color:
-            continue  # attack targets drawn later on top of pieces
+        # Skip if an enemy occupies this tile (current or next) — drawn as red dot later
+        is_attack = False
+        for p in pieces:
+            if p is selected or not p.alive or p.color == selected.color:
+                continue
+            if (p.col == tc and p.row == tr):
+                is_attack = True
+                break
+            if p.moving and p.next_tile == (tc, tr):
+                is_attack = True
+                break
+        if is_attack:
+            continue
         dot = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
         pygame.draw.circle(dot, MOVE_DOT_COLOR, (TILE // 2, TILE // 2), 15)
         surface.blit(dot, (tc * TILE, tr * TILE))
 
 
 def draw_attack_dots(surface, selected, legal_targets, pieces):
-    """Draw red dots over enemy pieces that can be attacked."""
+    """Draw red dots on every legal-target tile where an enemy is present
+    (on its current tile OR its mid-slide next tile)."""
     if selected is None:
         return
+    # Build set of all tiles occupied by enemies (current + next)
+    enemy_tiles = set()
+    for p in pieces:
+        if p is selected or not p.alive or p.color == selected.color:
+            continue
+        enemy_tiles.add((p.col, p.row))
+        if p.moving and p.next_tile:
+            enemy_tiles.add(p.next_tile)
+    # Draw red dot on any legal target that overlaps an enemy tile
     for (tc, tr) in legal_targets:
-        occ = _any_piece_at(pieces, tc, tr, exclude=selected)
-        if occ and occ.color != selected.color:
+        if (tc, tr) in enemy_tiles:
             dot = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
             pygame.draw.circle(dot, ATTACK_DOT_COLOR, (TILE // 2, TILE // 2), 18)
             surface.blit(dot, (tc * TILE, tr * TILE))
