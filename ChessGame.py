@@ -250,8 +250,14 @@ class Piece:
         self.knight_timer += dt
         if self.knight_phase == "crossfade":
             t = min(self.knight_timer / self.knight_duration, 1.0)
-            self.knight_alpha = int(255 * (1 - t))      # origin fades out
-            self.knight_dest_alpha = int(255 * t)        # target fades in
+            enemy = self._get_enemy_on_tile(pieces, self.target_col, self.target_row)
+            if enemy is not None:
+                # Attacking an occupied tile — stay visible at origin, no fade
+                self.knight_alpha = 255
+                self.knight_dest_alpha = 0
+            else:
+                self.knight_alpha = int(255 * (1 - t))      # origin fades out
+                self.knight_dest_alpha = int(255 * t)        # target fades in
             if t >= 1.0:
                 friendly = self._get_blocker(pieces, self.target_col, self.target_row)
                 enemy = self._get_enemy_on_tile(pieces, self.target_col, self.target_row)
@@ -268,9 +274,9 @@ class Piece:
                     self.waiting = False
                     self.path = []
                 elif enemy is not None:
-                    # Wait for enemy to die / move
+                    # Wait for enemy to die / move — stay visible at origin
                     self.knight_phase = "waiting"
-                    self.knight_alpha = 0
+                    self.knight_alpha = 255
                     self.knight_dest_alpha = 0
                     self.waiting = True
                     self.attack_target = enemy
@@ -382,8 +388,8 @@ class Piece:
             dest_img.set_alpha(self.knight_dest_alpha)
             surface.blit(dest_img, (self.target_col * TILE, self.target_row * TILE))
         elif self.name == "Knight" and self.knight_phase == "waiting":
-            # Knight invisible during wait – draw nothing (arrow will show)
-            pass
+            # Knight stays visible at its origin while attacking
+            surface.blit(img, (self.origin_col * TILE, self.origin_row * TILE))
         else:
             surface.blit(img, (self.pixel_x, self.pixel_y))
 
@@ -732,9 +738,39 @@ def draw_attack_dots(surface, selected, legal_targets, pieces):
 # ---------------------------------------------------------------------------
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Real-Time Chess")
+    parser.add_argument("--host", action="store_true",
+                        help="Host a game (you play white)")
+    parser.add_argument("--join", type=str, default=None, metavar="IP",
+                        help="Join a game at IP (you play black)")
+    args = parser.parse_args()
+
+    is_server = args.host
+    is_client = args.join is not None
+    is_network = is_server or is_client
+    my_color = "white" if is_server else ("black" if is_client else None)
+
+    # --- Networking setup ---
+    net = None
+    if is_server:
+        from network import Server
+        net = Server()
+        net.wait_for_client()
+    elif is_client:
+        from network import Client
+        net = Client(args.join)
+        net.connect()
+
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Real-Time Chess")
+    caption = "Real-Time Chess"
+    if is_server:
+        caption += " [HOST - White]"
+    elif is_client:
+        caption += " [CLIENT - Black]"
+    pygame.display.set_caption(caption)
     clock = pygame.time.Clock()
 
     base_path = os.path.dirname(os.path.abspath(__file__))
@@ -747,9 +783,36 @@ def main():
     winner = None
     font = pygame.font.SysFont("consolas", 22)
 
+    sync_timer = 0.0
+    SYNC_INTERVAL = 1.0 / 20  # 20 Hz state sync
+
     running = True
     while running:
         dt = clock.tick(FPS) / 1000.0  # seconds
+
+        # --- Network: receive ---
+        if is_server and net:
+            for msg in net.get_messages():
+                if msg.get("type") == "move":
+                    idx = msg["piece_index"]
+                    if 0 <= idx < len(pieces):
+                        p = pieces[idx]
+                        if p.alive and p.color == "black" and not p.moving:
+                            p.start_move(msg["target_col"], msg["target_row"])
+                elif msg.get("type") == "stop":
+                    idx = msg["piece_index"]
+                    if 0 <= idx < len(pieces):
+                        p = pieces[idx]
+                        if p.color == "black":
+                            p.stop()
+
+        if is_client and net:
+            from network import apply_state
+            for msg in net.get_messages():
+                if msg.get("type") == "state":
+                    apply_state(pieces, msg["pieces"])
+                    game_over = msg["game_over"]
+                    winner = msg["winner"]
 
         # --- Events ---
         for event in pygame.event.get():
@@ -761,9 +824,15 @@ def main():
 
                 # Check stop buttons first
                 stop_hit = False
-                for p in pieces:
+                for i, p in enumerate(pieces):
                     if p.stop_btn_hit(mx, my):
-                        p.stop()
+                        # In network mode, only stop own pieces
+                        if is_network and p.color != my_color:
+                            continue
+                        if is_client and net:
+                            net.send_stop(i)
+                        else:
+                            p.stop()
                         stop_hit = True
                         break
                 if stop_hit:
@@ -779,19 +848,27 @@ def main():
                     continue
 
                 # Did we click on a legal target?
-                # First check if there's a friendly piece on this tile – always re-select it
+                # First check if there's a friendly piece on this tile - always re-select it
                 clicked_piece = None
                 for p in pieces:
                     if p.alive and not p.moving and p.col == click_col and p.row == click_row:
                         clicked_piece = p
                         break
 
+                # In network mode, only select own pieces
+                if is_network and clicked_piece and clicked_piece.color != my_color:
+                    clicked_piece = None
+
                 if clicked_piece and (clicked_piece is selected or clicked_piece.color == (selected.color if selected else None)):
                     # Re-select (reevaluate moves) on every click
                     selected = clicked_piece
                     legal_targets = get_legal_targets(clicked_piece, pieces)
                 elif selected and (click_col, click_row) in legal_targets:
-                    selected.start_move(click_col, click_row)
+                    if is_client and net:
+                        idx = pieces.index(selected)
+                        net.send_move(idx, click_col, click_row)
+                    else:
+                        selected.start_move(click_col, click_row)
                     selected = None
                     legal_targets = []
                 elif clicked_piece:
@@ -801,7 +878,8 @@ def main():
                     selected = None
                     legal_targets = []
 
-        if not game_over:
+        # --- Simulation (server or local only — client receives state) ---
+        if not is_client and not game_over:
             # --- Combat (before movement so damage applies until 100% arrival) ---
             process_combat(pieces, dt)
 
@@ -820,6 +898,13 @@ def main():
                 selected = None
                 legal_targets = []
 
+        # --- Network: send state (server only) ---
+        if is_server and net:
+            sync_timer += dt
+            if sync_timer >= SYNC_INTERVAL:
+                sync_timer = 0.0
+                net.send_state(pieces, game_over, winner)
+
         # --- Draw ---
         draw_board(screen)
         draw_highlights(screen, selected, legal_targets, pieces)
@@ -836,11 +921,12 @@ def main():
         pygame.draw.rect(screen, (30, 30, 30), status_rect)
         if game_over:
             txt = font.render(f"{winner} wins!  Press ESC to quit.", True, (255, 255, 100))
+        elif is_network and net and not net.connected:
+            txt = font.render("Disconnected!", True, (255, 80, 80))
+        elif selected:
+            txt = font.render(f"Selected: {selected.color} {selected.name}", True, (220, 220, 220))
         else:
-            if selected:
-                txt = font.render(f"Selected: {selected.color} {selected.name}", True, (220, 220, 220))
-            else:
-                txt = font.render("Click a piece to select, then click a target.", True, (180, 180, 180))
+            txt = font.render("Click a piece to select, then click a target.", True, (180, 180, 180))
         screen.blit(txt, (10, TILE * BOARD + 8))
 
         pygame.display.flip()
@@ -850,6 +936,8 @@ def main():
         if keys[pygame.K_ESCAPE]:
             running = False
 
+    if net:
+        net.close()
     pygame.quit()
     sys.exit()
 

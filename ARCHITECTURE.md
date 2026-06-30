@@ -2,20 +2,49 @@
 
 ## Overview
 
-A real-time strategy (RTS) board game built with **Python** and **Pygame**. Two players share a single 8×8 board with chess-like pieces, but there are no turns — all pieces can move simultaneously. Pieces have hit points and deal damage when attacking, and the game ends when a king reaches 0 HP.
+A real-time strategy board game built with **Python 3** and **Pygame**.
+Two players share a standard 8×8 chess board, but there are **no turns** —
+all pieces move simultaneously in real time. Pieces have hit points (HP)
+and deal damage on contact. The game ends when a King reaches 0 HP.
 
-Everything resides in a single file: **ChessGame.py**.
+The game supports three modes:
+
+| Mode | Command | Description |
+|---|---|---|
+| Local | `python ChessGame.py` | Both colors on one machine |
+| Host | `python ChessGame.py --host` | You play **white**, wait for a client |
+| Join | `python ChessGame.py --join <IP>` | You play **black**, connect to host |
 
 ---
 
-## Constants & Configuration
+## File Structure
+
+```
+chess/
+├── ChessGame.py          # Game logic, rendering, main loop
+├── network.py             # TCP server/client for online play
+├── ARCHITECTURE.md        # This file
+└── pieces/
+    ├── Bishop/            # black.png, white.png
+    ├── King/
+    ├── Knight/
+    ├── Pawn/
+    ├── Queen/
+    └── Rook/
+```
+
+---
+
+## Constants
 
 | Constant | Value | Purpose |
 |---|---|---|
 | `TILE` | 100 px | Size of one board square |
-| `BOARD` | 8 | Number of rows/columns |
+| `BOARD` | 8 | Rows and columns |
+| `WIDTH` | 800 px | Window width (`TILE × BOARD`) |
+| `HEIGHT` | 840 px | Window height (board + 40 px status bar) |
 | `FPS` | 60 | Frame rate cap |
-| `PIECE_SPEED` | 0.2 tiles/sec | Uniform movement speed for all pieces |
+| `PIECE_SPEED` | 0.3 tiles/sec | Uniform movement speed |
 | `DAMAGE_PER_SECOND` | 10 | HP removed from the defender each second |
 | `STOP_BTN_RADIUS` | 10 px | Clickable radius of the stop button |
 
@@ -32,176 +61,176 @@ Everything resides in a single file: **ChessGame.py**.
 
 ---
 
-## Assets
-
-Piece images are loaded from the `pieces/` folder:
-
-```
-pieces/
-  Bishop/   black.png, white.png
-  King/     black.png, white.png
-  Knight/   black.png, white.png
-  Pawn/     black.png, white.png
-  Queen/    black.png, white.png
-  Rook/     black.png, white.png
-```
-
-`load_piece_images()` reads every PNG at startup and scales them to `TILE × TILE`.
-
----
-
 ## Piece Class
 
-The central data structure. Each `Piece` instance holds:
+Each piece on the board is an instance of `Piece`. It holds both logical
+state (grid position, HP, alive) and visual state (pixel position, animation).
 
-### Identity
-- `color` — `"white"` or `"black"`
-- `name` — `"Pawn"`, `"Knight"`, `"Bishop"`, `"Rook"`, `"Queen"`, `"King"`
+### Key Fields
 
-### Position
-- `col`, `row` — current logical tile (updated tile-by-tile during movement)
-- `pixel_x`, `pixel_y` — sub-tile pixel position for smooth rendering
-- `origin_col`, `origin_row` — tile where the current move started
-
-### Health
-- `hp` / `max_hp` — current and starting hit points
-- `alive` — `False` once `hp` reaches 0
-
-### Movement State
-- `moving` — whether the piece is in transit
-- `target_col`, `target_row` — final destination tile
-- `path[]` / `path_index` — list of intermediate waypoints; the piece advances one tile at a time, freeing the previous tile immediately
-- `waiting` — `True` when the next tile is blocked by an enemy (piece stays centered on its own tile, deals damage via the combat system)
-- `attack_target` — reference to the defender being attacked (used by pawns to check if a diagonal capture succeeded)
-
-### Knight-Specific
-- `knight_phase` — `None`, `"crossfade"`, or `"waiting"`
-- `knight_alpha` / `knight_dest_alpha` — opacity at origin / destination during crossfade
-- `knight_timer`, `knight_duration` — animation timing
+| Field | Type | Purpose |
+|---|---|---|
+| `color` | str | `"white"` or `"black"` |
+| `name` | str | `"Pawn"`, `"Knight"`, `"Bishop"`, `"Rook"`, `"Queen"`, `"King"` |
+| `col`, `row` | int | Current logical grid position |
+| `hp`, `max_hp` | float | Current and maximum hit points |
+| `alive` | bool | `False` when HP ≤ 0 |
+| `moving` | bool | Currently in motion |
+| `waiting` | bool | Blocked by enemy, dealing damage |
+| `attack_target` | Piece/None | The enemy being fought |
+| `path` | list[(col, row)] | Waypoints from current tile to destination |
+| `path_index` | int | Index into `path` for next waypoint |
+| `pixel_x`, `pixel_y` | float | Smooth rendering position |
+| `origin_col/row` | int | Where movement started |
+| `target_col/row` | int | Final destination |
+| `has_moved` | bool | Disables pawn double-step after first move |
 
 ### Key Properties
-- `current_tile` → `(col, row)`
-- `next_tile` → the waypoint the piece is heading towards (or `None`)
+
+- **`next_tile`** — The tile the piece is currently heading toward (`path[path_index]`), or `None`.
+- **`current_tile`** — `(col, row)` tuple.
 
 ---
 
 ## Movement System
 
-### Piece State Machine
+### Sliding Pieces (Pawn, Bishop, Rook, Queen, King)
+
+Movement uses a **tile-by-tile waypoint** system.
+`_compute_path()` generates a list of tiles from origin to target.
+Each frame, `_update_slide()` moves `pixel_x/y` toward the next waypoint
+at `PIECE_SPEED` tiles/sec. When a waypoint is reached, `col/row` update
+and `path_index` advances.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
-    Idle --> Moving : start_move()
-    Moving --> Waiting : enemy blocks next tile
-    Moving --> Idle : arrived at target / friendly blocks / stop()
-    Waiting --> Moving : enemy dies or moves away
-    Waiting --> Idle : stop() clicked
-    Idle --> [*] : hp ≤ 0 (removed)
-    Moving --> [*] : hp ≤ 0 (removed)
-    Waiting --> [*] : hp ≤ 0 (removed)
+    Idle --> Sliding : start_move()
+    Sliding --> Sliding : waypoint reached, more remain
+    Sliding --> Idle : final waypoint reached (_finish_move)
+    Sliding --> Waiting : enemy on next tile
+    Sliding --> Idle : friendly blocker (cancel)
+    Waiting --> Sliding : enemy dies or leaves
+    Waiting --> Idle : pawn diagonal target left alive (cancel)
 ```
 
-### Sliding Pieces (all except Knight)
+### Knights
 
-`_update_slide(dt, pieces)` runs every frame:
+Knights use a **crossfade animation**: the origin copy fades out while
+a destination copy fades in, both simultaneously over `3 / PIECE_SPEED`
+seconds. After the crossfade completes:
 
-1. Look up the next waypoint `(wc, wr)` from `self.path[self.path_index]`.
-2. **Blocker check first** — before moving any pixels, call `_get_blocker()`:
-   - **Enemy blocker** → snap to current tile center, set `waiting = True`. The piece is now "attacking" (combat system deals damage). A **red arrow** is drawn from the piece's tile to the enemy's tile.
-   - **Friendly blocker** → cancel movement entirely.
-   - **Pawn forward blocked** → always cancel (pawns can only attack diagonally).
-3. If no blocker (tile is free):
-   - If pawn was waiting diagonally and the defender survived (moved away), cancel — pawn doesn't move diagonally on a failed capture.
-   - Otherwise, interpolate `pixel_x`/`pixel_y` toward the waypoint.
-   - On arrival, advance `col`/`row` to the waypoint and increment `path_index`. The old tile is immediately freed.
-
-### Knight
-
-`_update_knight(dt, pieces)` uses a **simultaneous crossfade**:
+- **Friendly blocker** → snap back to origin, cancel move
+- **Enemy on target** → enter `"waiting"` phase (invisible, dealing damage)
+- **Clear** → arrive at destination
 
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
     Idle --> Crossfade : start_move()
-    Crossfade --> Idle : target empty → arrive
     Crossfade --> Waiting : enemy on target
-    Crossfade --> Idle : friendly on target → snap back
-    Waiting --> Idle : enemy dies/moves → teleport & arrive
-    Waiting --> Idle : stop()
+    Crossfade --> Idle : friendly blocker (snap back)
+    Crossfade --> Idle : arrived (_finish_move)
+    Waiting --> Idle : enemy dies (arrive)
+    Waiting --> Idle : friendly moved in (snap back)
 ```
 
-1. **`"crossfade"` phase** — origin copy fades out (alpha 255→0) while destination copy fades in (alpha 0→255). Both are drawn concurrently.
-2. At the end of the crossfade:
-   - **Enemy on target** → enter `"waiting"` phase (invisible, arrow drawn, damage dealt).
-   - **Friendly on target** → snap back to origin, cancel.
-   - **Empty target** → arrive, finish move.
-3. **`"waiting"` phase** — once the target clears, teleport to destination and finish.
+### Collision Checks (per frame)
 
-### Stop Button
+| Check | Method | When |
+|---|---|---|
+| Friendly blocker | `_get_blocker()` | Before any pixel movement; checks `col/row` and `next_tile` of same-color pieces |
+| Enemy on tile | `_get_enemy_on_tile()` | After friendly check; checks `col/row` and `next_tile` of opposite-color pieces |
+| Stationary enemy | `_get_stationary_enemy()` | Pawns moving forward only; ignores moving enemies |
+| Head-on collision | inline loop | Two enemies heading toward each other's tiles; both stop and fight |
 
-Every moving piece shows a small **red circle with a white X** in its top-right corner. Clicking it calls `piece.stop()`, which snaps the piece to its current logical tile and cancels all movement state.
+### Pawn-Specific Rules
+
+- **Forward movement**: Pawns move forward (same column). They only stop for
+  **stationary** enemies on forward tiles (they keep sliding if attacked by a
+  moving enemy). They deal **0 damage** when moving forward.
+- **Diagonal attack**: Pawns attack diagonally. Shown as legal targets only
+  when an enemy occupies the diagonal tile (current or `next_tile`).
+- **Failed diagonal**: If a pawn waits diagonally and the defender survives
+  and leaves, the pawn cancels (stays on current tile, doesn't move diagonally).
+- **Double-step**: Available only if `has_moved` is `False`.
+- **Path blocked**: Forward tiles also blocked by any piece's `next_tile`
+  (`_pawn_path_clear` uses `include_next=True`).
+
+### Mutual Combat
+
+When two pieces head toward each other (head-on collision), both remain
+in place and deal damage simultaneously until one dies. The survivor then
+proceeds to the freed tile. Pawns moving forward are exempt from this
+lock — they keep sliding instead.
 
 ---
 
 ## Combat System
 
-`process_combat(pieces, dt)` — called every frame after movement updates.
+`process_combat()` runs **before** movement updates each frame, ensuring
+damage applies on the final arrival frame.
 
-**One-directional damage**: only the **defender** takes damage. For each moving piece (the attacker), if its `next_tile` matches any enemy piece's `current_tile`, the defender loses `DAMAGE_PER_SECOND × dt` HP. When HP ≤ 0, the piece is removed (`alive = False`).
+```
+for each alive, moving attacker:
+    target_tile = attacker.next_tile
+    skip if attacker is Pawn moving forward (same column)
+    for each alive enemy defender:
+        defender_tiles = { current_tile } ∪ { next_tile if mid-slide }
+        if target_tile ∈ defender_tiles:
+            defender.hp -= DAMAGE_PER_SECOND × dt
+            if defender.hp ≤ 0: kill defender
+```
 
-The attacker is never damaged.
+Key rules:
+- **One-directional damage**: Only the defender (the piece being moved into)
+  takes damage. The attacker is unharmed unless the defender is also attacking
+  back (mutual combat).
+- **Pawns never deal forward damage**: Skipped when `target_tile[0] == attacker.col`.
+- **Damage continues during flee**: If a defender starts moving away, damage
+  continues until its `col/row` actually changes (reaches the next tile).
 
 ---
 
 ## Move Generation
 
-`get_legal_targets(piece, pieces)` computes valid destination tiles following chess rules:
+`get_legal_targets()` returns all tiles a piece can currently move to.
 
-| Piece | Movement Pattern |
+| Piece | Rule |
 |---|---|
-| Pawn | Forward 1 (or 2 from start); diagonal capture only if enemy present |
-| Knight | L-shape jumps |
+| Pawn | Forward 1 (+ 2 from start); diagonal only if enemy present |
+| Knight | L-shape (8 possible squares) |
 | Bishop | Diagonal slides |
 | Rook | Orthogonal slides |
-| Queen | All 8 directions (slides) |
-| King | 1 square in any direction |
+| Queen | Diagonal + orthogonal slides |
+| King | One step in any direction |
 
-### Blocking Rules
-- `tile_blocked_by_own()` — a tile with a friendly piece (stationary or in-transit target) is blocked.
-- `_pawn_path_clear()` — pawn forward moves require no piece of either color on the target.
-- `_slide()` — sliding pieces stop at the first occupied tile; enemy tiles are added as attack targets, friendly tiles block.
+Blocking rules:
+- **Same-color pieces** block via `tile_blocked_by_own()`, which checks
+  `col/row`, `target_col/row`, and `next_tile`.
+- **Sliding pieces** stop at the first occupied tile. If the occupant is an
+  enemy, that tile is still a legal target (attack). Tiles beyond are blocked.
 
 ---
 
 ## Rendering Pipeline
 
-Layers are drawn bottom-to-top:
+Each frame draws in order:
 
-```mermaid
-flowchart TB
-    subgraph "Draw Order (bottom → top)"
-        L1["1. Board Tiles\n8×8 light/dark grid"]
-        L2["2. Move Highlights\ngreen selected tile + grey dots"]
-        L3["3. Piece Images\n+ health bars + blue/red arrows + stop buttons"]
-        L4["4. Attack Dots\nred circles over capturable enemies"]
-        L5["5. Status Bar\nselection info / game-over text"]
-    end
-    L1 --> L2 --> L3 --> L4 --> L5
-```
-
-Each frame follows this order:
-
-1. **Board** — `draw_board()` paints the 8×8 grid of alternating light/dark tiles.
-2. **Move highlights** — `draw_highlights()` draws a green overlay on the selected piece's tile and grey dots on reachable empty tiles.
-3. **Pieces** — each `Piece.draw()` renders:
-   - The piece image (with crossfade handling for knights)
-   - A **health bar** at the bottom of the tile (green → yellow → red)
-   - A **blue arrow** from origin to target while moving
-   - A **red arrow** toward the enemy tile while attacking/waiting
-   - A **stop button** (red X circle) in the top-right corner while moving
-4. **Attack dots** — `draw_attack_dots()` draws semi-transparent red circles over enemy pieces that can be captured (rendered on top of piece images).
-5. **Status bar** — 40 px strip below the board showing selected piece info or game-over message.
+1. **Board** — alternating light/dark 100×100 squares
+2. **Highlights** — green overlay on selected tile; grey dots on legal move
+   tiles (empty only)
+3. **Pieces** — sprite at `pixel_x/y`; knight crossfade draws two alpha
+   copies; knight waiting draws nothing
+4. **Attack dots** — red dots on legal-target tiles where an enemy is present
+   (rendered on top of pieces)
+5. **Per-piece overlays** (drawn by `Piece.draw()`):
+   - **HP bar** — bottom of tile; green/yellow/red based on ratio
+   - **Blue arrow** — from origin to target while sliding
+   - **Red arrow** — from current tile to enemy tile while waiting/attacking
+   - **Stop button** — red circle with white X, top-right corner of tile
+6. **Status bar** — 40 px strip below board showing selection info, winner,
+   or disconnection status
 
 ---
 
@@ -209,24 +238,102 @@ Each frame follows this order:
 
 ```mermaid
 flowchart TD
-    Click["Mouse Click (x, y)"] --> S{Hit stop button?}
-    S -->|Yes| Stop["piece.stop()\ncancel movement"]
-    S -->|No| T{Friendly piece\non tile?}
-    T -->|Yes| Sel["Select piece\nreevaluate legal moves"]
-    T -->|No| U{Tile in\nlegal_targets?}
-    U -->|Yes| Move["start_move()\nbegin sliding"]
-    U -->|No| Desel["Deselect\nclear highlights"]
+    Click[Mouse Click] --> StopBtn{Hit stop button?}
+    StopBtn -->|yes| Stop[Stop piece, deselect]
+    StopBtn -->|no| InBounds{In board bounds?}
+    InBounds -->|no| Deselect[Clear selection]
+    InBounds -->|yes| OwnPiece{Own stationary piece?}
+    OwnPiece -->|yes| Select[Select piece, compute legal targets]
+    OwnPiece -->|no| LegalTarget{Legal target tile?}
+    LegalTarget -->|yes, local/host| Move[start_move on piece]
+    LegalTarget -->|yes, client| NetMove[send_move over network]
+    LegalTarget -->|no| ClickEnemy{Any piece on tile?}
+    ClickEnemy -->|yes, own| Select
+    ClickEnemy -->|no| Deselect
 ```
 
-All input is mouse-driven (left click):
+In network mode, players can only select and control their own color's pieces.
 
-1. **Stop button** — checked first; stops the moving piece.
-2. **Friendly piece click** — (re)selects the piece, reevaluates legal moves.
-3. **Legal target click** — initiates movement toward that tile.
-4. **Empty/invalid click** — deselects.
-5. **ESC** — quits the game.
+---
 
-Each click on a piece always reevaluates available moves based on current board state.
+## Networking (`network.py`)
+
+### Architecture
+
+The server is **authoritative** — it runs the full simulation (movement,
+combat, game-over checks). The client is **display-only** — it sends input
+commands and receives state snapshots.
+
+```mermaid
+sequenceDiagram
+    participant S as Server (White)
+    participant C as Client (Black)
+    
+    S->>S: Listen on port 5555
+    C->>S: TCP connect
+    
+    loop Every frame
+        C->>S: move / stop commands (JSON)
+        S->>S: Process inputs, run simulation
+    end
+    
+    loop 20 Hz
+        S->>C: Full game state snapshot (JSON)
+        C->>C: apply_state() overwrites all Piece fields
+    end
+```
+
+### Protocol
+
+Length-prefixed JSON over TCP:
+
+```
+[4 bytes big-endian uint32: payload length][UTF-8 JSON payload]
+```
+
+Maximum message size: 10 MB (sanity cap).
+
+### Message Types
+
+**Client → Server:**
+
+| Type | Fields | Purpose |
+|---|---|---|
+| `move` | `piece_index`, `target_col`, `target_row` | Move a black piece |
+| `stop` | `piece_index` | Stop a black piece |
+
+Server validates that the piece index is valid and the piece belongs to black.
+
+**Server → Client:**
+
+| Type | Fields | Purpose |
+|---|---|---|
+| `state` | `pieces[]`, `game_over`, `winner` | Full game state snapshot |
+
+Each piece is serialised as a dict with all fields (color, name, col, row,
+hp, pixel positions, knight animation state, path, etc.). `attack_target` is
+excluded (not serialisable; server handles combat).
+
+### Classes
+
+- **`Server`** — Creates TCP socket on `0.0.0.0:5555`, accepts one client.
+  Receiver thread reads incoming messages into a thread-safe queue.
+  `send_state()` broadcasts the full piece array as JSON.
+- **`Client`** — Connects to host IP on port 5555. Receiver thread reads
+  state messages. `send_move()` and `send_stop()` transmit input commands.
+- **`piece_to_dict()` / `apply_state()`** — Serialise and deserialise all
+  `Piece` fields to/from plain dicts.
+
+### Sync Rate
+
+State is broadcast at **20 Hz** (every 50 ms). The client renders at 60 FPS
+using the last received state.
+
+### Disconnection
+
+Both `Server` and `Client` detect disconnection via failed `recv()` or
+`send()` calls. The status bar shows "Disconnected!" when `net.connected`
+becomes `False`.
 
 ---
 
@@ -234,35 +341,41 @@ Each click on a piece always reevaluates available moves based on current board 
 
 ```mermaid
 flowchart TD
-    A[Start Frame] --> B["dt = clock.tick(FPS) / 1000"]
-    B --> C{Poll Events}
-    C -->|Mouse Click| D[Input Handling]
-    C -->|Quit / ESC| Z[Exit]
-    D --> E[Update Movement\nfor every piece]
-    E --> F[Process Combat\ndamage defenders]
-    F --> G{King HP ≤ 0?}
-    G -->|Yes| H[Game Over]
-    G -->|No| I[Draw Frame]
-    I --> J["Board → Highlights → Pieces → Attack Dots → Status Bar"]
-    J --> K[pygame.display.flip]
-    K --> A
+    Start[Frame Start] --> DT[dt = clock.tick / 1000]
+    DT --> NetRecv{Network mode?}
+    NetRecv -->|server| ServerRecv[Process client move/stop messages]
+    NetRecv -->|client| ClientRecv[apply_state from server snapshots]
+    NetRecv -->|local| Events
+    ServerRecv --> Events
+    ClientRecv --> Events
+    Events[Process pygame events / input] --> Sim{Is client?}
+    Sim -->|no| Combat[process_combat]
+    Combat --> Movement[update all pieces]
+    Movement --> GameOver[Check king alive]
+    GameOver --> Sync
+    Sim -->|yes| Sync[Network sync]
+    Sync -->|server| SendState[send_state at 20 Hz]
+    Sync -->|otherwise| Draw
+    SendState --> Draw
+    Draw[Render board, pieces, UI] --> Flip[pygame.display.flip]
+    Flip --> Start
 ```
 
-The game ends when either king's HP reaches 0, displaying `"{Color} wins!"`.
+### Frame Order (Server / Local)
 
----
+1. Receive network messages (server only)
+2. Process pygame events (clicks on pieces, stop buttons)
+3. `process_combat()` — apply damage
+4. `piece.update()` — advance movement for all pieces
+5. Check game-over (king HP ≤ 0)
+6. Send state snapshot (server only, 20 Hz)
+7. Draw everything
+8. `pygame.display.flip()`
 
-## File Structure
+### Frame Order (Client)
 
-```
-chess/
-  ChessGame.py              # All game logic in a single file
-  ARCHITECTURE.md            # This document
-  pieces/
-    Bishop/  black.png  white.png
-    King/    black.png  white.png
-    Knight/  black.png  white.png
-    Pawn/    black.png  white.png
-    Queen/   black.png  white.png
-    Rook/    black.png  white.png
-```
+1. Receive state snapshots, overwrite all piece fields
+2. Process pygame events (clicks → send commands to server)
+3. No local simulation
+4. Draw everything from last received state
+5. `pygame.display.flip()`
