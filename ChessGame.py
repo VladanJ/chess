@@ -26,7 +26,7 @@ HP_MAP = {
     "Bishop": 300,
     "Rook": 500,
     "Queen": 1000,
-    "King": 5000,
+    "King": 100,
 }
 
 DAMAGE_PER_SECOND = 10
@@ -57,6 +57,8 @@ def in_bounds(col, row):
 # ---------------------------------------------------------------------------
 
 class Piece:
+    _attack_counter = 0          # monotonic counter to order concurrent attackers
+
     def __init__(self, color, name, col, row):
         self.color = color          # "white" or "black"
         self.name = name            # "Pawn", "Knight", …
@@ -85,6 +87,9 @@ class Piece:
         self.path_index = 0
         self.waiting = False         # True if blocked by enemy, waiting to proceed
         self.attack_target = None     # ref to the piece being attacked (for pawn diagonal check)
+        self.attack_order = None      # order in which this piece started attacking its tile
+
+        self.being_attacked = False  # True this frame if taking damage (HP bar blinks)
 
         self.has_moved = False       # for pawn double-step
 
@@ -112,7 +117,7 @@ class Piece:
         self.moving = True
 
         if self.name == "Knight":
-            dist = 3.0
+            dist = 1.0
             total_time = dist / PIECE_SPEED
             self.knight_duration = total_time
             self.knight_phase = "crossfade"
@@ -158,19 +163,9 @@ class Piece:
 
         wc, wr = self.path[self.path_index]
 
-        # Check for friendly blocker BEFORE moving any pixels
-        blocker = self._get_blocker(pieces, wc, wr)
-        if blocker is not None:
-            # Friendly piece blocks — cancel movement
-            self.pixel_x = float(self.col * TILE)
-            self.pixel_y = float(self.row * TILE)
-            self.moving = False
-            self.waiting = False
-            self.path = []
-            self.attack_target = None
-            return
-
-        # Check for enemy occupying the target tile
+        # Check for enemy occupying the target tile FIRST. If an enemy is there,
+        # this is an attack — friendly pieces also attacking the same tile must
+        # NOT cancel us (multiple pieces may gang up on one enemy).
         # Pawns moving forward only stop for stationary enemies (they keep
         # sliding and take damage if the attacker is moving toward them).
         if self.name == "Pawn" and wc == self.col:
@@ -188,8 +183,20 @@ class Piece:
                 self.path = []
                 self.attack_target = None
             else:
-                self.waiting = True
-                self.attack_target = enemy
+                self._begin_attack(enemy)
+            return
+
+        # No enemy on the tile — a friendly piece occupying or heading there
+        # (to settle, not to attack) blocks us.
+        blocker = self._get_blocker(pieces, wc, wr)
+        if blocker is not None:
+            # Friendly piece blocks — cancel movement
+            self.pixel_x = float(self.col * TILE)
+            self.pixel_y = float(self.row * TILE)
+            self.moving = False
+            self.waiting = False
+            self.path = []
+            self.attack_target = None
             return
 
         # Target still sliding away but hasn't reached the next tile yet —
@@ -219,9 +226,16 @@ class Piece:
                         and q.moving and q.next_tile == (self.col, self.row)):
                     self.pixel_x = float(self.col * TILE)
                     self.pixel_y = float(self.row * TILE)
-                    self.waiting = True
-                    self.attack_target = q
+                    self._begin_attack(q)
                     return
+
+        # Contested freed tile: only the earliest attacker may claim it.
+        # If a friendly piece started attacking this tile before us and is
+        # still alive, hold position and let it move in first.
+        if self.waiting and self._earlier_attacker_exists(pieces, wc, wr):
+            self.pixel_x = float(self.col * TILE)
+            self.pixel_y = float(self.row * TILE)
+            return
 
         # Tile is free — slide towards it
         self.waiting = False
@@ -278,8 +292,7 @@ class Piece:
                     self.knight_phase = "waiting"
                     self.knight_alpha = 255
                     self.knight_dest_alpha = 0
-                    self.waiting = True
-                    self.attack_target = enemy
+                    self._begin_attack(enemy)
                 else:
                     # Arrived
                     self.pixel_x = float(self.target_col * TILE)
@@ -306,6 +319,9 @@ class Piece:
                 self.waiting = False
                 self.path = []
             elif enemy is None:
+                # Contested freed tile: let the earliest attacker move in first.
+                if self._earlier_attacker_exists(pieces, self.target_col, self.target_row):
+                    return
                 self.pixel_x = float(self.target_col * TILE)
                 self.pixel_y = float(self.target_row * TILE)
                 self.col = self.target_col
@@ -322,19 +338,44 @@ class Piece:
         self.moving = False
         self.waiting = False
         self.attack_target = None
+        self.attack_order = None
         self.path = []
         self.path_index = 0
         if moved:
             self.has_moved = True
 
+    def _begin_attack(self, enemy):
+        """Enter the waiting/attacking state, recording attack order on first entry
+        so concurrent attackers can be resolved first-come-first-served."""
+        if not self.waiting:
+            Piece._attack_counter += 1
+            self.attack_order = Piece._attack_counter
+        self.waiting = True
+        self.attack_target = enemy
+
+    def _earlier_attacker_exists(self, pieces, col, row):
+        """True if a friendly piece started attacking tile (col, row) before us
+        and is still alive (so it has priority to move onto the freed tile)."""
+        if self.attack_order is None:
+            return False
+        for q in pieces:
+            if (q is not self and q.alive and q.color == self.color
+                    and q.waiting and q.next_tile == (col, row)
+                    and q.attack_order is not None
+                    and q.attack_order < self.attack_order):
+                return True
+        return False
+
     def _get_blocker(self, pieces, col, row):
         """Return an alive same-color piece sitting on or sliding through (col, row).
-        Enemy pieces do NOT block — they are handled via the combat system."""
+        Enemy pieces do NOT block — they are handled via the combat system.
+        A friendly piece that is merely *waiting* (attacking that tile) does not
+        block — multiple friendly pieces may attack the same enemy tile at once."""
         for q in pieces:
             if q is not self and q.alive and q.color == self.color:
                 if q.col == col and q.row == row:
                     return q
-                if q.moving and q.next_tile == (col, row):
+                if q.moving and not q.waiting and q.next_tile == (col, row):
                     return q
         return None
 
@@ -365,6 +406,7 @@ class Piece:
         self.moving = False
         self.waiting = False
         self.attack_target = None
+        self.attack_order = None
         self.path = []
         self.path_index = 0
         if self.name == "Knight":
@@ -470,11 +512,16 @@ class Piece:
         # fill
         if ratio > 0.5:
             color = (0, 200, 0)
-        elif ratio > 0.25:
-            color = (220, 180, 0)
+        elif ratio > 0.2:
+            color = (220, 140, 0)
         else:
             color = (210, 30, 30)
-        pygame.draw.rect(surface, color, (bx, by, int(bar_w * ratio), bar_h))
+        # Blink while being attacked: skip drawing the fill on alternate intervals
+        blink_on = True
+        if self.being_attacked:
+            blink_on = (pygame.time.get_ticks() // 150) % 2 == 0
+        if blink_on:
+            pygame.draw.rect(surface, color, (bx, by, int(bar_w * ratio), bar_h))
         # border
         pygame.draw.rect(surface, (0, 0, 0), (bx, by, bar_w, bar_h), 1)
 
@@ -492,7 +539,11 @@ def occupied_by(pieces, col, row):
 
 
 def tile_blocked_by_own(pieces, piece, col, row):
-    """True if a friendly piece currently occupies or is moving through (col, row)."""
+    """True if a friendly piece currently occupies or is moving through (col, row).
+    A moving piece only blocks its current tile and its next tile — the rest of
+    its path (including the final destination) stays free for other pieces.
+    A friendly piece that is merely *waiting* (attacking that tile) does not
+    block — multiple friendly pieces may attack the same enemy tile at once."""
     for p in pieces:
         if p is piece or not p.alive:
             continue
@@ -500,9 +551,7 @@ def tile_blocked_by_own(pieces, piece, col, row):
             continue
         if (p.col == col and p.row == row):
             return True
-        if p.moving and p.target_col == col and p.target_row == row:
-            return True
-        if p.moving and p.next_tile == (col, row):
+        if p.moving and not p.waiting and p.next_tile == (col, row):
             return True
     return True if not in_bounds(col, row) else False
 
@@ -630,6 +679,10 @@ def process_combat(pieces, dt):
     whose next_tile equals any tile the defender occupies (current or mid-slide)."""
     damage_per_frame = DAMAGE_PER_SECOND * dt
 
+    # Reset per-frame attack indicator
+    for p in pieces:
+        p.being_attacked = False
+
     for attacker in pieces:
         if not attacker.alive or not attacker.moving:
             continue
@@ -650,6 +703,7 @@ def process_combat(pieces, dt):
                 defender_tiles.add(defender.next_tile)
             if target_tile in defender_tiles:
                 defender.hp -= damage_per_frame
+                defender.being_attacked = True
                 if defender.hp <= 0:
                     defender.hp = 0
                     defender.alive = False
