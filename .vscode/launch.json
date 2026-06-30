@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Play vs AI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/ChessGame.py",
+            "args": ["--ai", "--difficulty", "${input:aiDifficulty}"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "aiDifficulty",
+            "type": "pickString",
+            "description": "AI difficulty (0 = off, 10 = hardest; equals AI actions per second)",
+            "default": "5",
+            "options": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+        }
+    ]
+}

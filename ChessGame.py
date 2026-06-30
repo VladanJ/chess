@@ -799,12 +799,23 @@ def main():
                         help="Host a game (you play white)")
     parser.add_argument("--join", type=str, default=None, metavar="IP",
                         help="Join a game at IP (you play black)")
+    parser.add_argument("--ai", action="store_true",
+                        help="Play locally against the AI (you play white, AI plays black)")
+    parser.add_argument("--difficulty", type=int, default=5,
+                        metavar="0-10",
+                        help="AI difficulty 0-10 (= AI actions per second; 0 disables it)")
     args = parser.parse_args()
 
     is_server = args.host
     is_client = args.join is not None
     is_network = is_server or is_client
-    my_color = "white" if is_server else ("black" if is_client else None)
+    ai_enabled = args.ai and not is_network
+    my_color = ("white" if is_server
+                else "black" if is_client
+                else "white" if ai_enabled
+                else None)
+    # True if the local human may only control pieces of my_color.
+    restrict_input = is_network or ai_enabled
 
     # --- Networking setup ---
     net = None
@@ -824,12 +835,20 @@ def main():
         caption += " [HOST - White]"
     elif is_client:
         caption += " [CLIENT - Black]"
+    elif ai_enabled:
+        caption += " [vs AI - White]"
     pygame.display.set_caption(caption)
     clock = pygame.time.Clock()
 
     base_path = os.path.dirname(os.path.abspath(__file__))
     images = load_piece_images(base_path)
     pieces = create_pieces()
+
+    # AI opponent (local play only) — controls the black army.
+    ai = None
+    if ai_enabled:
+        from ai import AIController
+        ai = AIController("black", get_legal_targets, difficulty=args.difficulty)
 
     selected = None        # currently selected Piece (or None)
     legal_targets = []     # list of (col, row)
@@ -880,8 +899,8 @@ def main():
                 stop_hit = False
                 for i, p in enumerate(pieces):
                     if p.stop_btn_hit(mx, my):
-                        # In network mode, only stop own pieces
-                        if is_network and p.color != my_color:
+                        # Only allow stopping pieces the local player controls
+                        if restrict_input and p.color != my_color:
                             continue
                         if is_client and net:
                             net.send_stop(i)
@@ -910,7 +929,7 @@ def main():
                         break
 
                 # In network mode, only select own pieces
-                if is_network and clicked_piece and clicked_piece.color != my_color:
+                if restrict_input and clicked_piece and clicked_piece.color != my_color:
                     clicked_piece = None
 
                 if clicked_piece and (clicked_piece is selected or clicked_piece.color == (selected.color if selected else None)):
@@ -934,6 +953,10 @@ def main():
 
         # --- Simulation (server or local only — client receives state) ---
         if not is_client and not game_over:
+            # --- AI opponent issues moves for its color ---
+            if ai:
+                ai.update(dt, pieces)
+
             # --- Combat (before movement so damage applies until 100% arrival) ---
             process_combat(pieces, dt)
 
