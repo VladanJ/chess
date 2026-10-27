@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="668" height="122" font-family="monospace" font-size="11">
+<rect width="668" height="122" fill="white"/>
+<text x="120" y="20" font-size="14" font-weight="bold">Layer 0 bias (24 hidden neurons)</text>
+<text x="120" y="38" fill="#555">range [-1.445, +1.445]</text>
+<text x="112" y="75.0" text-anchor="end">h1</text>
+<rect x="120" y="60" width="22" height="22" fill="#ffcdcd" stroke="#eee" stroke-width="0.5"><title>0: +0.2832</title></rect>
+<rect x="142" y="60" width="22" height="22" fill="#c1c1ff" stroke="#eee" stroke-width="0.5"><title>1: -0.3459</title></rect>
+<rect x="164" y="60" width="22" height="22" fill="#fff7f7" stroke="#eee" stroke-width="0.5"><title>2: +0.0426</title></rect>
+<rect x="186" y="60" width="22" height="22" fill="#ff2020" stroke="#eee" stroke-width="0.5"><title>3: +1.2621</title></rect>
+<rect x="208" y="60" width="22" height="22" fill="#ff8484" stroke="#eee" stroke-width="0.5"><title>4: +0.6940</title></rect>
+<rect x="230" y="60" width="22" height="22" fill="#2323ff" stroke="#eee" stroke-width="0.5"><title>5: -1.2431</title></rect>
+<rect x="252" y="60" width="22" height="22" fill="#ffcccc" stroke="#eee" stroke-width="0.5"><title>6: +0.2850</title></rect>
+<rect x="274" y="60" width="22" height="22" fill="#0000ff" stroke="#eee" stroke-width="0.5"><title>7: -1.4449</title></rect>
+<rect x="296" y="60" width="22" height="22" fill="#fffcfc" stroke="#eee" stroke-width="0.5"><title>8: +0.0122</title></rect>
+<rect x="318" y="60" width="22" height="22" fill="#bebeff" stroke="#eee" stroke-width="0.5"><title>9: -0.3652</title></rect>
+<rect x="340" y="60" width="22" height="22" fill="#b0b0ff" stroke="#eee" stroke-width="0.5"><title>10: -0.4431</title></rect>
+<rect x="362" y="60" width="22" height="22" fill="#ff3939" stroke="#eee" stroke-width="0.5"><title>11: +1.1167</title></rect>
+<rect x="384" y="60" width="22" height="22" fill="#ff1515" stroke="#eee" stroke-width="0.5"><title>12: +1.3238</title></rect>
+<rect x="406" y="60" width="22" height="22" fill="#ffaaaa" stroke="#eee" stroke-width="0.5"><title>13: +0.4760</title></rect>
+<rect x="428" y="60" width="22" height="22" fill="#ff5656" stroke="#eee" stroke-width="0.5"><title>14: +0.9564</title></rect>
+<rect x="450" y="60" width="22" height="22" fill="#ffc0c0" stroke="#eee" stroke-width="0.5"><title>15: +0.3544</title></rect>
+<rect x="472" y="60" width="22" height="22" fill="#fcfcff" stroke="#eee" stroke-width="0.5"><title>16: -0.0133</title></rect>
+<rect x="494" y="60" width="22" height="22" fill="#ff4141" stroke="#eee" stroke-width="0.5"><title>17: +1.0761</title></rect>
+<rect x="516" y="60" width="22" height="22" fill="#c4c4ff" stroke="#eee" stroke-width="0.5"><title>18: -0.3340</title></rect>
+<rect x="538" y="60" width="22" height="22" fill="#4545ff" stroke="#eee" stroke-width="0.5"><title>19: -1.0507</title></rect>
+<rect x="560" y="60" width="22" height="22" fill="#ffd0d0" stroke="#eee" stroke-width="0.5"><title>20: +0.2629</title></rect>
+<rect x="582" y="60" width="22" height="22" fill="#bdbdff" stroke="#eee" stroke-width="0.5"><title>21: -0.3693</title></rect>
+<rect x="604" y="60" width="22" height="22" fill="#ff8f8f" stroke="#eee" stroke-width="0.5"><title>22: +0.6322</title></rect>
+<rect x="626" y="60" width="22" height="22" fill="#f1f1ff" stroke="#eee" stroke-width="0.5"><title>23: -0.0746</title></rect>
+</svg>

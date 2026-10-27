@@ -1,0 +1,125 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #181a20;
+  color: #ebebf5;
+  font-family: Consolas, "Courier New", monospace;
+  overflow: hidden;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#board {
+  display: block;
+  /* 800x840 logical canvas, scaled to fit the viewport */
+  aspect-ratio: 800 / 840;
+  width: min(100vw, calc(100vh * 800 / 840));
+  height: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(24, 26, 32, 0.92);
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.panel {
+  width: min(640px, 94vw);
+  text-align: center;
+  padding: 16px;
+}
+
+h1 {
+  font-size: clamp(28px, 6vw, 44px);
+  margin: 0 0 8px;
+}
+
+h2 {
+  font-size: 20px;
+  font-weight: normal;
+  color: #c8cdd7;
+  margin: 24px 0 10px;
+  text-align: left;
+}
+
+h2.disabled {
+  color: #6e6e73;
+}
+
+.sub,
+.hint {
+  color: #8c919b;
+  font-size: 15px;
+  margin: 6px 0;
+}
+
+.row {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+}
+
+.row button {
+  flex: 1;
+}
+
+.stepper button {
+  flex: 0 0 56px;
+}
+
+.stepper span {
+  min-width: 80px;
+  font-size: 24px;
+  align-self: center;
+}
+
+button {
+  font: inherit;
+  font-size: 20px;
+  color: #f5f5f5;
+  background: #34373f;
+  border: 2px solid #121317;
+  border-radius: 8px;
+  padding: 14px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #50545e;
+}
+
+button.active {
+  background: #4678b4;
+}
+
+button:disabled {
+  color: #6e6e73;
+  cursor: default;
+}
+
+button.primary {
+  margin-top: 32px;
+  padding: 16px 48px;
+  font-size: 24px;
+}

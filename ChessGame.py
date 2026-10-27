@@ -1,3 +1,12 @@
+# Import torch before pygame so its native DLLs (c10.dll etc.) initialize
+# cleanly. Under some launchers, importing torch *after* pygame's SDL/image
+# libraries causes "WinError 1114: DLL initialization routine failed". The
+# trained brain is optional, so a failure here just falls back to heuristic AI.
+try:
+    import torch  # noqa: F401
+except Exception:
+    pass
+
 import pygame
 import sys
 import os
@@ -18,7 +27,8 @@ HIGHLIGHT_COLOR = (186, 202, 68, 150)
 MOVE_DOT_COLOR = (100, 100, 100, 160)
 ATTACK_DOT_COLOR = (220, 30, 30, 200)
 
-PIECE_SPEED = 0.3  # tiles per second (same for every piece – slow RTS pace)
+PIECE_SPEED = 0.3  # active tiles/sec; set from the chosen game speed in main()
+BASE_PIECE_SPEED = 0.3  # movement speed at the fastest cadence (1s between moves)
 
 HP_MAP = {
     "Pawn": 100,
@@ -32,6 +42,13 @@ HP_MAP = {
 DAMAGE_PER_SECOND = 10
 STOP_BTN_RADIUS = 10
 
+# Game speed presets: seconds a player must wait between moves (the action
+# cooldown). The game is real-time, so this is what keeps it human-friendly.
+# Piece movement scales inversely (BASE_PIECE_SPEED / seconds), so a slower
+# cadence also makes pieces travel more slowly.
+SPEED_PRESETS = {"fast": 1.0, "medium": 3.0, "slow": 5.0}
+DEFAULT_SPEED = "medium"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,6 +61,12 @@ def load_piece_images(base_path):
             path = os.path.join(base_path, "pieces", piece_name, f"{color}.png")
             img = pygame.image.load(path).convert_alpha()
             img = pygame.transform.smoothscale(img, (TILE, TILE))
+            if piece_name in ("Pawn", "Rook"):
+                # 30% narrower, centred on a transparent full-tile surface
+                narrow_w = int(TILE * 0.7)
+                narrow = pygame.transform.smoothscale(img, (narrow_w, TILE))
+                img = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+                img.blit(narrow, ((TILE - narrow_w) // 2, 0))
             images[color][piece_name] = img
     return images
 
@@ -104,6 +127,20 @@ class Piece:
     def current_tile(self):
         return (self.col, self.row)
 
+    def has_reached_tile(self):
+        """True if the piece is settled on a tile it has reached, so it may
+        deal attack damage and is not vulnerable at a tile it only heads toward.
+        A slide piece must be at its tile center. A knight counts as reached
+        while parked at its origin attacking an occupied tile (its destination
+        stays hidden), and as *not* reached only while genuinely fading across
+        to an empty target (mid-jump)."""
+        if self.name == "Knight":
+            if self.knight_phase == "crossfade":
+                return self.knight_dest_alpha == 0
+            return True
+        return (self.pixel_x == self.col * TILE
+                and self.pixel_y == self.row * TILE)
+
     # ------------------------------------------------------------------
     def start_move(self, tcol, trow):
         """Begin a move towards (tcol, trow)."""
@@ -163,15 +200,15 @@ class Piece:
 
         wc, wr = self.path[self.path_index]
 
-        # Check for enemy occupying the target tile FIRST. If an enemy is there,
-        # this is an attack — friendly pieces also attacking the same tile must
-        # NOT cancel us (multiple pieces may gang up on one enemy).
-        # Pawns moving forward only stop for stationary enemies (they keep
-        # sliding and take damage if the attacker is moving toward them).
+        # Stop only if the target tile is actually BLOCKED — an enemy is
+        # physically standing on it. A piece merely *heading* to the same tile
+        # (or attacking it) does not block us: while under attack we keep moving
+        # as long as the path is clear, and the first piece to arrive claims the
+        # tile. Pawns moving forward only stop for stationary enemies.
         if self.name == "Pawn" and wc == self.col:
             enemy = self._get_stationary_enemy(pieces, wc, wr)
         else:
-            enemy = self._get_enemy_on_tile(pieces, wc, wr)
+            enemy = self._get_enemy_blocking(pieces, wc, wr)
         if enemy is not None:
             # Snap to current tile center — wait and attack
             self.pixel_x = float(self.col * TILE)
@@ -217,13 +254,16 @@ class Piece:
                 self.attack_target = None
                 return
 
-        # Head-on collision: enemy heading toward our current tile
-        # while we head toward theirs — mutual combat, stay and fight.
+        # Head-on collision: a genuine mutual swap (we head into their tile
+        # while they head into ours) — stay and fight. A one-sided chase into
+        # the tile we are merely leaving does NOT stop us; we keep sliding
+        # (being attacked on the previous tile lets us continue).
         # Pawns moving forward (same column) keep sliding instead.
         if not (self.name == "Pawn" and wc == self.col):
             for q in pieces:
                 if (q is not self and q.alive and q.color != self.color
-                        and q.moving and q.next_tile == (self.col, self.row)):
+                        and q.moving and q.next_tile == (self.col, self.row)
+                        and (wc, wr) == (q.col, q.row)):
                     self.pixel_x = float(self.col * TILE)
                     self.pixel_y = float(self.row * TILE)
                     self._begin_attack(q)
@@ -264,7 +304,7 @@ class Piece:
         self.knight_timer += dt
         if self.knight_phase == "crossfade":
             t = min(self.knight_timer / self.knight_duration, 1.0)
-            enemy = self._get_enemy_on_tile(pieces, self.target_col, self.target_row)
+            enemy = self._get_enemy_blocking(pieces, self.target_col, self.target_row)
             if enemy is not None:
                 # Attacking an occupied tile — stay visible at origin, no fade
                 self.knight_alpha = 255
@@ -274,7 +314,7 @@ class Piece:
                 self.knight_dest_alpha = int(255 * t)        # target fades in
             if t >= 1.0:
                 friendly = self._get_blocker(pieces, self.target_col, self.target_row)
-                enemy = self._get_enemy_on_tile(pieces, self.target_col, self.target_row)
+                enemy = self._get_enemy_blocking(pieces, self.target_col, self.target_row)
                 if friendly is not None:
                     # Friendly blocker – snap back to origin
                     self.pixel_x = float(self.origin_col * TILE)
@@ -305,7 +345,7 @@ class Piece:
                     self._finish_move()
         elif self.knight_phase == "waiting":
             friendly = self._get_blocker(pieces, self.target_col, self.target_row)
-            enemy = self._get_enemy_on_tile(pieces, self.target_col, self.target_row)
+            enemy = self._get_enemy_blocking(pieces, self.target_col, self.target_row)
             if friendly is not None:
                 # Friendly moved in – cancel
                 self.pixel_x = float(self.origin_col * TILE)
@@ -379,22 +419,22 @@ class Piece:
                     return q
         return None
 
-    def _get_enemy_on_tile(self, pieces, col, row):
-        """Return an alive enemy whose current or next tile is (col, row), or None."""
-        for q in pieces:
-            if q is not self and q.alive and q.color != self.color:
-                if q.col == col and q.row == row:
-                    return q
-                if q.moving and q.next_tile == (col, row):
-                    return q
-        return None
-
     def _get_stationary_enemy(self, pieces, col, row):
         """Return an alive non-moving enemy sitting on (col, row), or None."""
         for q in pieces:
             if q is not self and q.alive and q.color != self.color:
                 if q.col == col and q.row == row and not q.moving:
                     return q
+        return None
+
+    def _get_enemy_blocking(self, pieces, col, row):
+        """Return an alive enemy physically standing on (col, row), or None.
+        Enemies merely sliding toward the tile do not count — the path is still
+        clear until one actually arrives, so a piece under attack keeps moving."""
+        for q in pieces:
+            if (q is not self and q.alive and q.color != self.color
+                    and q.col == col and q.row == row):
+                return q
         return None
 
     def stop(self):
@@ -686,6 +726,10 @@ def process_combat(pieces, dt):
     for attacker in pieces:
         if not attacker.alive or not attacker.moving:
             continue
+        # An attacker can only deal damage from a tile it has actually reached;
+        # a piece still gliding between tiles (or a knight mid-jump) cannot.
+        if not attacker.has_reached_tile():
+            continue
         target_tile = attacker.next_tile
         if target_tile is None:
             continue
@@ -697,9 +741,13 @@ def process_combat(pieces, dt):
                 continue
             if defender.color == attacker.color:
                 continue
-            # Defender occupies both its current tile and (if mid-slide) its next tile
+            # A defender occupies its current tile, plus the tile it is sliding
+            # into — but only while it is genuinely in transit. A piece parked
+            # at its tile attacking (e.g. a knight holding at its origin) is not
+            # vulnerable at the tile it is merely heading toward, so it does not
+            # take damage just for attacking.
             defender_tiles = {defender.current_tile}
-            if defender.moving and defender.next_tile:
+            if defender.moving and defender.next_tile and not defender.has_reached_tile():
                 defender_tiles.add(defender.next_tile)
             if target_tile in defender_tiles:
                 defender.hp -= damage_per_frame
@@ -788,6 +836,131 @@ def draw_attack_dots(surface, selected, legal_targets, pieces):
 
 
 # ---------------------------------------------------------------------------
+# Settings menu
+# ---------------------------------------------------------------------------
+
+def settings_menu(screen, clock, defaults):
+    """Interactive pre-game settings screen for local play.
+
+    Returns a dict {'speed', 'ai_enabled', 'difficulty'} when the player starts,
+    or None if they quit.
+    """
+    title_font = pygame.font.SysFont("consolas", 44, bold=True)
+    label_font = pygame.font.SysFont("consolas", 24)
+    btn_font = pygame.font.SysFont("consolas", 24)
+    hint_font = pygame.font.SysFont("consolas", 18)
+
+    speed = defaults.get("speed", DEFAULT_SPEED)
+    ai_enabled = bool(defaults.get("ai_enabled", True))
+    difficulty = int(defaults.get("difficulty", 5))
+
+    cx = WIDTH // 2
+    seconds = {"fast": "1s", "medium": "3s", "slow": "5s"}
+
+    mouse = (0, 0)
+    clicked = False
+
+    def draw_button(rect, label, active=False, enabled=True):
+        hover = rect.collidepoint(mouse) and enabled
+        if active:
+            color = (70, 120, 180)
+        elif hover:
+            color = (80, 84, 94)
+        else:
+            color = (52, 55, 63)
+        pygame.draw.rect(screen, color, rect, border_radius=8)
+        pygame.draw.rect(screen, (18, 19, 23), rect, width=2, border_radius=8)
+        txtcol = (245, 245, 245) if enabled else (110, 110, 115)
+        t = btn_font.render(label, True, txtcol)
+        screen.blit(t, (rect.centerx - t.get_width() // 2,
+                        rect.centery - t.get_height() // 2))
+        return hover and clicked
+
+    while True:
+        mouse = pygame.mouse.get_pos()
+        clicked = False
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return None
+                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    return {"speed": speed, "ai_enabled": ai_enabled,
+                            "difficulty": difficulty}
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                clicked = True
+
+        screen.fill((24, 26, 32))
+        title = title_font.render("Real-Time Chess", True, (235, 235, 245))
+        screen.blit(title, (cx - title.get_width() // 2, 50))
+        sub = hint_font.render("Settings", True, (150, 160, 180))
+        screen.blit(sub, (cx - sub.get_width() // 2, 108))
+
+        bh = 56
+        # --- Game speed ---
+        y = 165
+        lbl = label_font.render("Game Speed", True, (200, 205, 215))
+        screen.blit(lbl, (cx - 300, y))
+        bw, gap = 180, 20
+        total = 3 * bw + 2 * gap
+        sx = cx - total // 2
+        for i, key in enumerate(SPEED_PRESETS):
+            r = pygame.Rect(sx + i * (bw + gap), y + 34, bw, bh)
+            if draw_button(r, f"{key} ({seconds.get(key, '')})",
+                           active=(speed == key)):
+                speed = key
+
+        # --- Opponent ---
+        y += 34 + bh + 36
+        lbl = label_font.render("Opponent", True, (200, 205, 215))
+        screen.blit(lbl, (cx - 300, y))
+        ow = 280
+        r_ai = pygame.Rect(cx - ow - 10, y + 34, ow, bh)
+        r_hs = pygame.Rect(cx + 10, y + 34, ow, bh)
+        if draw_button(r_ai, "vs AI", active=ai_enabled):
+            ai_enabled = True
+        if draw_button(r_hs, "2 Players (hotseat)", active=not ai_enabled):
+            ai_enabled = False
+
+        # --- AI difficulty ---
+        y += 34 + bh + 36
+        lbl = label_font.render("AI Difficulty", True,
+                                (200, 205, 215) if ai_enabled
+                                else (110, 110, 115))
+        screen.blit(lbl, (cx - 300, y))
+        r_minus = pygame.Rect(cx - 200, y + 34, bh, bh)
+        r_plus = pygame.Rect(cx + 200 - bh, y + 34, bh, bh)
+        if draw_button(r_minus, "-", enabled=ai_enabled):
+            difficulty = max(0, difficulty - 1)
+        if draw_button(r_plus, "+", enabled=ai_enabled):
+            difficulty = min(10, difficulty + 1)
+        val = ("OFF" if difficulty == 0 else str(difficulty)) if ai_enabled else "-"
+        vt = label_font.render(val, True,
+                               (245, 245, 245) if ai_enabled else (110, 110, 115))
+        screen.blit(vt, (cx - vt.get_width() // 2,
+                         y + 34 + bh // 2 - vt.get_height() // 2))
+        dt2 = hint_font.render("actions/sec (0 = AI disabled)", True,
+                               (140, 145, 155))
+        screen.blit(dt2, (cx - dt2.get_width() // 2, y + 34 + bh + 6))
+
+        # --- Start ---
+        y += 34 + bh + 48
+        r_start = pygame.Rect(cx - 130, y, 260, 64)
+        if draw_button(r_start, "Start Game"):
+            return {"speed": speed, "ai_enabled": ai_enabled,
+                    "difficulty": difficulty}
+
+        hint = hint_font.render(
+            "Click to choose  -  Enter to start  -  Esc to quit",
+            True, (120, 125, 135))
+        screen.blit(hint, (cx - hint.get_width() // 2, HEIGHT - 34))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -804,20 +977,28 @@ def main():
     parser.add_argument("--difficulty", type=int, default=5,
                         metavar="0-10",
                         help="AI difficulty 0-10 (= AI actions per second; 0 disables it)")
+    parser.add_argument("--brain", type=str, default=None, metavar="PATH",
+                        help="Use a trained neural-net brain for the AI "
+                             "(defaults to ai_brain.pt if present)")
+    parser.add_argument("--speed", choices=list(SPEED_PRESETS),
+                        default=DEFAULT_SPEED,
+                        help="Game speed: fast=1s, medium=3s, slow=5s between "
+                             "moves; also scales piece movement "
+                             f"(default {DEFAULT_SPEED}).")
     args = parser.parse_args()
+
+    global PIECE_SPEED
 
     is_server = args.host
     is_client = args.join is not None
     is_network = is_server or is_client
-    ai_enabled = args.ai and not is_network
-    my_color = ("white" if is_server
-                else "black" if is_client
-                else "white" if ai_enabled
-                else None)
-    # True if the local human may only control pieces of my_color.
-    restrict_input = is_network or ai_enabled
 
-    # --- Networking setup ---
+    # CLI values act as the starting defaults for the settings menu.
+    chosen_speed = args.speed
+    ai_enabled = args.ai and not is_network
+    difficulty = args.difficulty
+
+    # --- Networking setup (network games are configured via CLI) ---
     net = None
     if is_server:
         from network import Server
@@ -830,6 +1011,38 @@ def main():
 
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Real-Time Chess")
+    clock = pygame.time.Clock()
+
+    # --- Settings menu (local play only; network is set via CLI) ---
+    if not is_network:
+        cfg = settings_menu(screen, clock, {
+            "speed": chosen_speed,
+            "ai_enabled": True,
+            "difficulty": difficulty,
+        })
+        if cfg is None:
+            if net:
+                net.close()
+            pygame.quit()
+            sys.exit()
+        chosen_speed = cfg["speed"]
+        ai_enabled = cfg["ai_enabled"]
+        difficulty = cfg["difficulty"]
+        if ai_enabled and difficulty == 0:
+            ai_enabled = False  # difficulty 0 means the AI is disabled
+
+    # Apply game speed: move cadence + matching (slower) piece movement.
+    move_interval = SPEED_PRESETS.get(chosen_speed, SPEED_PRESETS[DEFAULT_SPEED])
+    PIECE_SPEED = BASE_PIECE_SPEED * SPEED_PRESETS["fast"] / move_interval
+
+    my_color = ("white" if is_server
+                else "black" if is_client
+                else "white" if ai_enabled
+                else None)
+    # True if the local human may only control pieces of my_color.
+    restrict_input = is_network or ai_enabled
+
     caption = "Real-Time Chess"
     if is_server:
         caption += " [HOST - White]"
@@ -838,7 +1051,6 @@ def main():
     elif ai_enabled:
         caption += " [vs AI - White]"
     pygame.display.set_caption(caption)
-    clock = pygame.time.Clock()
 
     base_path = os.path.dirname(os.path.abspath(__file__))
     images = load_piece_images(base_path)
@@ -848,13 +1060,35 @@ def main():
     ai = None
     if ai_enabled:
         from ai import AIController
-        ai = AIController("black", get_legal_targets, difficulty=args.difficulty)
+        # Try to load a trained neural-net brain; fall back to the heuristic.
+        brain_path = args.brain or os.path.join(base_path, "ai_brain.pt")
+        policy = None
+        if os.path.exists(brain_path):
+            try:
+                from brain import load_brain, NNPolicy
+                policy = NNPolicy(load_brain(brain_path))
+                print(f"AI using trained brain: {brain_path}")
+            except Exception as e:
+                print(f"Could not load brain ({e}); using heuristic AI.")
+        ai = AIController("black", get_legal_targets,
+                         difficulty=difficulty, policy=policy)
+        # Move at the same cadence as the human (one action per move_interval).
+        # Difficulty still controls strength (skill/randomness), not speed.
+        ai.actions_per_second = 1.0 / move_interval
 
     selected = None        # currently selected Piece (or None)
     legal_targets = []     # list of (col, row)
     game_over = False
     winner = None
     font = pygame.font.SysFont("consolas", 22)
+
+    # Rate-limit committed moves to the chosen cadence. Selecting and inspecting
+    # pieces stays free; only issuing a move is throttled.
+    action_cooldown_ms = int(move_interval * 1000)
+    last_action_ms = -action_cooldown_ms   # ready immediately at start
+
+    # Black only begins moving once White has made the first move.
+    white_started = False
 
     sync_timer = 0.0
     SYNC_INTERVAL = 1.0 / 20  # 20 Hz state sync
@@ -870,7 +1104,8 @@ def main():
                     idx = msg["piece_index"]
                     if 0 <= idx < len(pieces):
                         p = pieces[idx]
-                        if p.alive and p.color == "black" and not p.moving:
+                        if (p.alive and p.color == "black" and not p.moving
+                                and white_started):
                             p.start_move(msg["target_col"], msg["target_row"])
                 elif msg.get("type") == "stop":
                     idx = msg["piece_index"]
@@ -937,13 +1172,23 @@ def main():
                     selected = clicked_piece
                     legal_targets = get_legal_targets(clicked_piece, pieces)
                 elif selected and (click_col, click_row) in legal_targets:
-                    if is_client and net:
-                        idx = pieces.index(selected)
-                        net.send_move(idx, click_col, click_row)
+                    # Rate-limit: ignore the move while on cooldown, but keep
+                    # the piece selected so the player can retry when ready.
+                    now_ms = pygame.time.get_ticks()
+                    if (not is_client and selected.color == "black"
+                            and not white_started):
+                        pass  # black can't move until white has moved first
+                    elif action_cooldown_ms and now_ms - last_action_ms < action_cooldown_ms:
+                        pass  # on cooldown — action ignored
                     else:
-                        selected.start_move(click_col, click_row)
-                    selected = None
-                    legal_targets = []
+                        last_action_ms = now_ms
+                        if is_client and net:
+                            idx = pieces.index(selected)
+                            net.send_move(idx, click_col, click_row)
+                        else:
+                            selected.start_move(click_col, click_row)
+                        selected = None
+                        legal_targets = []
                 elif clicked_piece:
                     selected = clicked_piece
                     legal_targets = get_legal_targets(clicked_piece, pieces)
@@ -953,8 +1198,13 @@ def main():
 
         # --- Simulation (server or local only — client receives state) ---
         if not is_client and not game_over:
+            # Black holds until White's first move has begun.
+            if not white_started and any(
+                    p.color == "white" and p.moving for p in pieces):
+                white_started = True
+
             # --- AI opponent issues moves for its color ---
-            if ai:
+            if ai and white_started:
                 ai.update(dt, pieces)
 
             # --- Combat (before movement so damage applies until 100% arrival) ---
@@ -1003,8 +1253,27 @@ def main():
         elif selected:
             txt = font.render(f"Selected: {selected.color} {selected.name}", True, (220, 220, 220))
         else:
-            txt = font.render("Click a piece to select, then click a target.", True, (180, 180, 180))
+            if not white_started and not is_client:
+                txt = font.render("White moves first.", True, (180, 180, 180))
+            else:
+                txt = font.render("Click a piece to select, then click a target.", True, (180, 180, 180))
         screen.blit(txt, (10, TILE * BOARD + 8))
+
+        # Player action-rate meter: refills over the cooldown, green when ready.
+        if action_cooldown_ms and not game_over:
+            elapsed = pygame.time.get_ticks() - last_action_ms
+            frac = max(0.0, min(1.0, elapsed / action_cooldown_ms))
+            ready = frac >= 1.0
+            bar_w, bar_h = 150, 18
+            bar_x = WIDTH - bar_w - 12
+            bar_y = TILE * BOARD + 11
+            pygame.draw.rect(screen, (60, 60, 60), (bar_x, bar_y, bar_w, bar_h))
+            fill = (90, 200, 90) if ready else (210, 165, 60)
+            pygame.draw.rect(screen, fill,
+                             (bar_x, bar_y, int(bar_w * frac), bar_h))
+            label = "READY" if ready else f"{(action_cooldown_ms - elapsed) / 1000:.1f}s"
+            lt = font.render(label, True, (245, 245, 245))
+            screen.blit(lt, (bar_x + bar_w // 2 - lt.get_width() // 2, bar_y - 2))
 
         pygame.display.flip()
 

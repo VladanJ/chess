@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="668" height="132" font-family="monospace" font-size="11">
+<rect width="668" height="132" fill="white"/>
+<text x="120" y="20" font-size="14" font-weight="bold">Layer 4  Linear(24 -&gt; 1)  weights (the read-out)</text>
+<text x="120" y="38" fill="#555">range [-1.941, +1.941]  blue = negative, red = positive</text>
+<text x="131.0" y="74" text-anchor="start" transform="rotate(-45 131.0 74)" fill="#333">0</text>
+<text x="153.0" y="74" text-anchor="start" transform="rotate(-45 153.0 74)" fill="#333">1</text>
+<text x="175.0" y="74" text-anchor="start" transform="rotate(-45 175.0 74)" fill="#333">2</text>
+<text x="197.0" y="74" text-anchor="start" transform="rotate(-45 197.0 74)" fill="#333">3</text>
+<text x="219.0" y="74" text-anchor="start" transform="rotate(-45 219.0 74)" fill="#333">4</text>
+<text x="241.0" y="74" text-anchor="start" transform="rotate(-45 241.0 74)" fill="#333">5</text>
+<text x="263.0" y="74" text-anchor="start" transform="rotate(-45 263.0 74)" fill="#333">6</text>
+<text x="285.0" y="74" text-anchor="start" transform="rotate(-45 285.0 74)" fill="#333">7</text>
+<text x="307.0" y="74" text-anchor="start" transform="rotate(-45 307.0 74)" fill="#333">8</text>
+<text x="329.0" y="74" text-anchor="start" transform="rotate(-45 329.0 74)" fill="#333">9</text>
+<text x="351.0" y="74" text-anchor="start" transform="rotate(-45 351.0 74)" fill="#333">10</text>
+<text x="373.0" y="74" text-anchor="start" transform="rotate(-45 373.0 74)" fill="#333">11</text>
+<text x="395.0" y="74" text-anchor="start" transform="rotate(-45 395.0 74)" fill="#333">12</text>
+<text x="417.0" y="74" text-anchor="start" transform="rotate(-45 417.0 74)" fill="#333">13</text>
+<text x="439.0" y="74" text-anchor="start" transform="rotate(-45 439.0 74)" fill="#333">14</text>
+<text x="461.0" y="74" text-anchor="start" transform="rotate(-45 461.0 74)" fill="#333">15</text>
+<text x="483.0" y="74" text-anchor="start" transform="rotate(-45 483.0 74)" fill="#333">16</text>
+<text x="505.0" y="74" text-anchor="start" transform="rotate(-45 505.0 74)" fill="#333">17</text>
+<text x="527.0" y="74" text-anchor="start" transform="rotate(-45 527.0 74)" fill="#333">18</text>
+<text x="549.0" y="74" text-anchor="start" transform="rotate(-45 549.0 74)" fill="#333">19</text>
+<text x="571.0" y="74" text-anchor="start" transform="rotate(-45 571.0 74)" fill="#333">20</text>
+<text x="593.0" y="74" text-anchor="start" transform="rotate(-45 593.0 74)" fill="#333">21</text>
+<text x="615.0" y="74" text-anchor="start" transform="rotate(-45 615.0 74)" fill="#333">22</text>
+<text x="637.0" y="74" text-anchor="start" transform="rotate(-45 637.0 74)" fill="#333">23</text>
+<text x="112" y="95.0" text-anchor="end" fill="#333">out 0</text>
+<rect x="120" y="80" width="22" height="22" fill="#5353ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 0: -1.3045</title></rect>
+<rect x="142" y="80" width="22" height="22" fill="#ff0000" stroke="#eee" stroke-width="0.5"><title>out 0 from 1: +1.9412</title></rect>
+<rect x="164" y="80" width="22" height="22" fill="#5a5aff" stroke="#eee" stroke-width="0.5"><title>out 0 from 2: -1.2505</title></rect>
+<rect x="186" y="80" width="22" height="22" fill="#5c5cff" stroke="#eee" stroke-width="0.5"><title>out 0 from 3: -1.2387</title></rect>
+<rect x="208" y="80" width="22" height="22" fill="#5050ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 4: -1.3316</title></rect>
+<rect x="230" y="80" width="22" height="22" fill="#bdbdff" stroke="#eee" stroke-width="0.5"><title>out 0 from 5: -0.4987</title></rect>
+<rect x="252" y="80" width="22" height="22" fill="#5c5cff" stroke="#eee" stroke-width="0.5"><title>out 0 from 6: -1.2366</title></rect>
+<rect x="274" y="80" width="22" height="22" fill="#9b9bff" stroke="#eee" stroke-width="0.5"><title>out 0 from 7: -0.7537</title></rect>
+<rect x="296" y="80" width="22" height="22" fill="#9696ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 8: -0.7953</title></rect>
+<rect x="318" y="80" width="22" height="22" fill="#e7e7ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 9: -0.1809</title></rect>
+<rect x="340" y="80" width="22" height="22" fill="#c9c9ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 10: -0.4038</title></rect>
+<rect x="362" y="80" width="22" height="22" fill="#1d1dff" stroke="#eee" stroke-width="0.5"><title>out 0 from 11: -1.7157</title></rect>
+<rect x="384" y="80" width="22" height="22" fill="#ffe3e3" stroke="#eee" stroke-width="0.5"><title>out 0 from 12: +0.2070</title></rect>
+<rect x="406" y="80" width="22" height="22" fill="#7676ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 13: -1.0372</title></rect>
+<rect x="428" y="80" width="22" height="22" fill="#ff7878" stroke="#eee" stroke-width="0.5"><title>out 0 from 14: +1.0247</title></rect>
+<rect x="450" y="80" width="22" height="22" fill="#ffe0e0" stroke="#eee" stroke-width="0.5"><title>out 0 from 15: +0.2334</title></rect>
+<rect x="472" y="80" width="22" height="22" fill="#ffbbbb" stroke="#eee" stroke-width="0.5"><title>out 0 from 16: +0.5118</title></rect>
+<rect x="494" y="80" width="22" height="22" fill="#fff8f8" stroke="#eee" stroke-width="0.5"><title>out 0 from 17: +0.0481</title></rect>
+<rect x="516" y="80" width="22" height="22" fill="#ff5454" stroke="#eee" stroke-width="0.5"><title>out 0 from 18: +1.2945</title></rect>
+<rect x="538" y="80" width="22" height="22" fill="#ffeded" stroke="#eee" stroke-width="0.5"><title>out 0 from 19: +0.1339</title></rect>
+<rect x="560" y="80" width="22" height="22" fill="#6e6eff" stroke="#eee" stroke-width="0.5"><title>out 0 from 20: -1.1010</title></rect>
+<rect x="582" y="80" width="22" height="22" fill="#e8e8ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 21: -0.1716</title></rect>
+<rect x="604" y="80" width="22" height="22" fill="#a9a9ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 22: -0.6523</title></rect>
+<rect x="626" y="80" width="22" height="22" fill="#f2f2ff" stroke="#eee" stroke-width="0.5"><title>out 0 from 23: -0.0915</title></rect>
+<text x="120" y="124" fill="#555">h2 neuron (columns)  x  out (rows)</text>
+</svg>

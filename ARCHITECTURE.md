@@ -12,6 +12,7 @@ The game supports three modes:
 | Mode | Command | Description |
 |---|---|---|
 | Local | `python ChessGame.py` | Both colors on one machine |
+| Vs AI | `python ChessGame.py --ai` | You play **white**, the AI plays **black** |
 | Host | `python ChessGame.py --host` | You play **white**, wait for a client |
 | Join | `python ChessGame.py --join <IP>` | You play **black**, connect to host |
 
@@ -21,9 +22,14 @@ The game supports three modes:
 
 ```
 chess/
-├── ChessGame.py          # Game logic, rendering, main loop
-├── network.py             # TCP server/client for online play
-├── ARCHITECTURE.md        # This file
+├── ChessGame.py           # Game logic, rendering, main loop
+├── ai.py                   # Heuristic AI controller (torch-free)
+├── brain.py                # Neural-net move policy (PyTorch)
+├── train.py                # Evolutionary self-play trainer (PyTorch)
+├── eval.py                 # Brain vs heuristic benchmark (PyTorch)
+├── network.py              # TCP server/client for online play
+├── ARCHITECTURE.md         # This file
+├── docs/                   # Long-form docs (overview, neural network, ML)
 └── pieces/
     ├── Bishop/            # black.png, white.png
     ├── King/
@@ -32,6 +38,10 @@ chess/
     ├── Queen/
     └── Rook/
 ```
+
+> The AI subsystem (`ai.py`, `brain.py`, `train.py`, `eval.py`) is documented
+> in depth in [docs/](docs/README.md). PyTorch is required only for the neural
+> brain and training — the game itself runs without it.
 
 ---
 
@@ -44,7 +54,9 @@ chess/
 | `WIDTH` | 800 px | Window width (`TILE × BOARD`) |
 | `HEIGHT` | 840 px | Window height (board + 40 px status bar) |
 | `FPS` | 60 | Frame rate cap |
-| `PIECE_SPEED` | 0.3 tiles/sec | Uniform movement speed |
+| `BASE_PIECE_SPEED` | 0.3 tiles/sec | Movement speed at the fastest cadence |
+| `PIECE_SPEED` | derived | Active movement speed = `BASE_PIECE_SPEED × 1s / interval` |
+| `SPEED_PRESETS` | fast 1s / medium 3s / slow 5s | Seconds between moves (player cooldown) |
 | `DAMAGE_PER_SECOND` | 10 | HP removed from the defender each second |
 | `STOP_BTN_RADIUS` | 10 px | Clickable radius of the stop button |
 
@@ -57,7 +69,7 @@ chess/
 | Bishop | 300 |
 | Rook | 500 |
 | Queen | 1000 |
-| King | 5000 |
+| King | 100 |
 
 ---
 

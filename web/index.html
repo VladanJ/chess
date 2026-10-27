@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Real-Time Chess</title>
+    <meta name="description" content="Chess with no turns: both players move at once, pieces have hit points, and combat happens on contact." />
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="board"></canvas>
+
+      <div id="menu" class="overlay">
+        <div class="panel">
+          <h1>Real-Time Chess</h1>
+          <p class="sub">No turns. Pieces have HP. Destroy the enemy King.</p>
+
+          <h2>Game Speed</h2>
+          <div class="row" id="speed-buttons">
+            <button data-speed="fast">fast (1s)</button>
+            <button data-speed="medium">medium (3s)</button>
+            <button data-speed="slow">slow (5s)</button>
+          </div>
+
+          <h2>Opponent</h2>
+          <div class="row">
+            <button id="opp-ai">vs AI</button>
+            <button id="opp-hotseat">2 Players (hotseat)</button>
+          </div>
+
+          <h2 id="diff-label">AI Difficulty</h2>
+          <div class="row stepper">
+            <button id="diff-minus">-</button>
+            <span id="diff-value">5</span>
+            <button id="diff-plus">+</button>
+          </div>
+          <p class="hint">0 = AI disabled</p>
+
+          <button id="start" class="primary">Start Game</button>
+          <p class="hint">Enter to start</p>
+        </div>
+      </div>
+
+      <div id="gameover" class="overlay hidden">
+        <div class="panel">
+          <h1 id="winner-text"></h1>
+          <button id="again" class="primary">Play Again</button>
+        </div>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
