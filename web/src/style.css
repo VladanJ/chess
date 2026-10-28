@@ -118,6 +118,18 @@ button:disabled {
   cursor: default;
 }
 
+#opp-online {
+  background: #26282e;
+  cursor: not-allowed;
+}
+
+button small {
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+  font-style: italic;
+}
+
 button.primary {
   margin-top: 32px;
   padding: 16px 48px;
