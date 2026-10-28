@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "chess",
+  "compatibility_date": "2025-10-01",
+  // Static site only: serve the Vite build output from web/.
+  "assets": {
+    "directory": "./web/dist"
+  }
+}
