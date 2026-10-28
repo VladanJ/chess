@@ -7,7 +7,8 @@ import {
 } from "./constants";
 import { Piece, setPieceSpeed } from "./piece";
 import {
-  Images, drawAttackDots, drawBoard, drawHighlights, drawPiece, drawStatus, loadPieceImages,
+  DEATH_MS, Images, drawAttackDots, drawBoard, drawDeaths, drawHighlights, drawPiece, drawStatus,
+  loadPieceImages,
 } from "./render";
 import { createPieces, getLegalTargets, processCombat } from "./rules";
 
@@ -164,7 +165,10 @@ function endGame(g: Game, winner: string): void {
   g.gameOver = true;
   g.winner = winner;
   $("winner-text").textContent = `${winner} wins!`;
-  gameOverPanel.classList.remove("hidden");
+  // Let the King's death animation play before covering the board.
+  setTimeout(() => {
+    if (game === g) gameOverPanel.classList.remove("hidden");
+  }, DEATH_MS);
 }
 
 // --- Input -------------------------------------------------------------------
@@ -258,6 +262,7 @@ function render(now: number): void {
   const g = game;
   drawHighlights(ctx, g.selected, g.legalTargets, g.pieces);
   for (const p of g.pieces) drawPiece(ctx, p, images, now);
+  drawDeaths(ctx, g.pieces, images, now);
   drawAttackDots(ctx, g.selected, g.legalTargets, g.pieces);
 
   let text = "Click a piece to select, then click a target.";

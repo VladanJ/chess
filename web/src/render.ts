@@ -177,6 +177,112 @@ export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, images: Image
   if (p.moving) drawStopBtn(ctx, p);
 }
 
+export const DEATH_MS = 1000;
+const SPARKLE_COLORS = ["#ffd166", "#ff8fab", "#8ecae6", "#b8f2a0"];
+
+const easeOut = (u: number) => 1 - (1 - u) * (1 - u);
+
+function sparkle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4;
+    const d = i % 2 === 0 ? r : r * 0.35;
+    ctx.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function ghost(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: Color, alpha: number): void {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color === "white" ? "#ffffff" : "#d9d2ff";
+  ctx.strokeStyle = "rgba(40,40,50,0.8)";
+  ctx.lineWidth = 2;
+  const bottom = y + r * 1.2;
+  ctx.beginPath();
+  ctx.arc(x, y, r, Math.PI, 0);
+  ctx.lineTo(x + r, bottom);
+  // Wavy hem: three bumps.
+  const bump = (2 * r) / 3;
+  for (let i = 0; i < 3; i++) {
+    const x0 = x + r - i * bump;
+    ctx.quadraticCurveTo(x0 - bump / 2, bottom - r * 0.35, x0 - bump, bottom);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#2b2b36";
+  for (const dx of [-0.38, 0.38]) {
+    ctx.beginPath();
+    ctx.ellipse(x + dx * r, y - r * 0.05, r * 0.14, r * 0.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "rgba(255,120,150,0.6)";
+  for (const dx of [-0.62, 0.62]) {
+    ctx.beginPath();
+    ctx.arc(x + dx * r, y + r * 0.3, r * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** Squish, twirl away, burst of sparkles and a little ghost floating up. */
+export function drawDeaths(ctx: CanvasRenderingContext2D, pieces: Piece[], images: Images, now: number): void {
+  for (const p of pieces) {
+    if (p.alive) continue;
+    p.diedAt ??= now;
+    const t = (now - p.diedAt) / DEATH_MS;
+    if (t >= 1) continue;
+    const cx = p.pixelX + TILE / 2;
+    const cy = p.pixelY + TILE / 2;
+    const seed = (p.col * 7 + p.row * 13) * 0.37;
+
+    if (t < 0.35) {
+      const u = t / 0.35;
+      ctx.globalAlpha = 1 - u;
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 5 * (1 - u);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 12 + 40 * easeOut(u), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    const squish = t < 0.12 ? Math.sin((Math.PI * t) / 0.12) * 0.3 : 0;
+    const v = Math.max(0, (t - 0.12) / 0.88);
+    const scale = Math.pow(1 - v, 1.5);
+    if (scale > 0.01) {
+      const img = images[p.color][p.name];
+      const w = NARROW.has(p.name) ? Math.trunc(TILE * 0.7) : TILE;
+      ctx.save();
+      ctx.globalAlpha = 1 - v * v;
+      ctx.translate(cx, cy - 36 * Math.sin(Math.PI * v));
+      ctx.rotate(v * Math.PI * 2 * (p.color === "white" ? 1 : -1));
+      ctx.scale((1 + squish) * scale, (1 - squish) * scale);
+      ctx.drawImage(img, -w / 2, -TILE / 2, w, TILE);
+      ctx.restore();
+    }
+
+    if (t > 0.05) {
+      const u = (t - 0.05) / 0.95;
+      ctx.globalAlpha = 1 - u;
+      for (let i = 0; i < 8; i++) {
+        const a = seed + (i * Math.PI * 2) / 8;
+        const d = 10 + 50 * easeOut(u);
+        ctx.fillStyle = SPARKLE_COLORS[i % SPARKLE_COLORS.length];
+        sparkle(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d, 8 * (1 - u) + 2);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    if (t > 0.25) {
+      const g = (t - 0.25) / 0.75;
+      ghost(ctx, cx + Math.sin(g * Math.PI * 3) * 6, cy - 10 - 55 * g, 16, p.color, Math.sin(Math.PI * g));
+    }
+  }
+}
+
 export interface StatusInfo {
   text: string;
   textColor: string;

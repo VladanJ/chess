@@ -46,6 +46,8 @@ export class Piece {
 
   beingAttacked = false;
   hasMoved = false;
+  // performance.now() when first drawn dead; drives the death animation.
+  diedAt: number | null = null;
 
   constructor(color: Color, name: PieceName, col: number, row: number, hp = HP_MAP[name]) {
     this.color = color;
