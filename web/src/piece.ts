@@ -47,13 +47,13 @@ export class Piece {
   beingAttacked = false;
   hasMoved = false;
 
-  constructor(color: Color, name: PieceName, col: number, row: number) {
+  constructor(color: Color, name: PieceName, col: number, row: number, hp = HP_MAP[name]) {
     this.color = color;
     this.name = name;
     this.col = col;
     this.row = row;
-    this.hp = HP_MAP[name];
-    this.maxHp = HP_MAP[name];
+    this.hp = hp;
+    this.maxHp = hp;
     this.targetCol = col;
     this.targetRow = row;
     this.pixelX = col * TILE;

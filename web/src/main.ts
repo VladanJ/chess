@@ -2,7 +2,8 @@ import "./style.css";
 import { AIController } from "./ai";
 import { Brain, NNPolicy, loadBrain } from "./brain";
 import {
-  BASE_PIECE_SPEED, Color, DEFAULT_SPEED, HEIGHT, SPEED_PRESETS, SpeedKey, TILE, Tile, WIDTH, inBounds,
+  BASE_PIECE_SPEED, Color, DEFAULT_SPEED, HEIGHT, HP_MAP, PIECE_NAMES, PieceName, SPEED_PRESETS, SpeedKey,
+  TILE, Tile, WIDTH, inBounds,
 } from "./constants";
 import { Piece, setPieceSpeed } from "./piece";
 import {
@@ -14,7 +15,11 @@ interface Settings {
   speed: SpeedKey;
   aiEnabled: boolean;
   difficulty: number;
+  hp: Record<PieceName, number>;
 }
+
+const HP_MIN = 10;
+const HP_MAX = 10000;
 
 interface Game {
   pieces: Piece[];
@@ -36,7 +41,8 @@ const ctx = canvas.getContext("2d")!;
 const menu = $("menu");
 const gameOverPanel = $("gameover");
 
-const settings: Settings = { speed: DEFAULT_SPEED, aiEnabled: true, difficulty: 5 };
+const settings: Settings = { speed: DEFAULT_SPEED, aiEnabled: true, difficulty: 5, hp: { ...HP_MAP } };
+const hpInputs = new Map<PieceName, HTMLInputElement>();
 let images: Images | null = null;
 let brain: Brain | null = null;
 let game: Game | null = null;
@@ -64,6 +70,30 @@ function renderMenu(): void {
   $("diff-value").textContent = settings.aiEnabled
     ? (settings.difficulty === 0 ? "OFF" : String(settings.difficulty))
     : "-";
+  for (const [name, input] of hpInputs) input.value = String(settings.hp[name]);
+}
+
+function initHpMenu(): void {
+  const grid = $("hp-grid");
+  for (const name of PIECE_NAMES) {
+    const label = document.createElement("label");
+    label.textContent = name;
+    label.htmlFor = `hp-${name}`;
+    const input = document.createElement("input");
+    Object.assign(input, { type: "number", id: label.htmlFor, min: HP_MIN, max: HP_MAX, step: 10 });
+    input.inputMode = "numeric";
+    input.addEventListener("change", () => {
+      const v = Math.round(Number(input.value));
+      if (Number.isFinite(v)) settings.hp[name] = Math.min(HP_MAX, Math.max(HP_MIN, v));
+      input.value = String(settings.hp[name]);
+    });
+    grid.append(label, input);
+    hpInputs.set(name, input);
+  }
+  $("hp-reset").addEventListener("click", () => {
+    settings.hp = { ...HP_MAP };
+    renderMenu();
+  });
 }
 
 function showMenu(): void {
@@ -92,6 +122,7 @@ function initMenu(): void {
   });
   $("start").addEventListener("click", startGame);
   $("again").addEventListener("click", showMenu);
+  initHpMenu();
   renderMenu();
 }
 
@@ -114,7 +145,7 @@ function startGame(): void {
 
   const cooldownMs = Math.trunc(moveInterval * 1000);
   game = {
-    pieces: createPieces(),
+    pieces: createPieces(settings.hp),
     ai,
     myColor: aiEnabled ? "white" : null,
     selected: null,
@@ -194,7 +225,11 @@ canvas.addEventListener("pointerdown", (e) => {
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && game) showMenu();
-  else if (e.key === "Enter" && !game && !menu.classList.contains("hidden")) startGame();
+  else if (e.key === "Enter" && !game && !menu.classList.contains("hidden")) {
+    // Blur fires the input's change event so a just-typed HP value is applied.
+    if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur();
+    startGame();
+  }
 });
 
 window.addEventListener("resize", resizeCanvas);

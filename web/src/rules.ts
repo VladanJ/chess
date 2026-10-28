@@ -1,4 +1,4 @@
-import { BOARD, DAMAGE_PER_SECOND, PieceName, Tile, inBounds, sameTile } from "./constants";
+import { BOARD, DAMAGE_PER_SECOND, HP_MAP, PieceName, Tile, inBounds, sameTile } from "./constants";
 import { Piece } from "./piece";
 
 /** True if a friendly piece occupies or is moving into (col, row), or the tile
@@ -143,11 +143,11 @@ export function processCombat(pieces: Piece[], dt: number): void {
 
 const BACK_RANK: PieceName[] = ["Rook", "Knight", "Bishop", "Queen", "King", "Bishop", "Knight", "Rook"];
 
-export function createPieces(): Piece[] {
+export function createPieces(hp: Record<PieceName, number> = HP_MAP): Piece[] {
   const pieces: Piece[] = [];
-  BACK_RANK.forEach((name, i) => pieces.push(new Piece("black", name, i, 0)));
-  for (let i = 0; i < BOARD; i++) pieces.push(new Piece("black", "Pawn", i, 1));
-  for (let i = 0; i < BOARD; i++) pieces.push(new Piece("white", "Pawn", i, 6));
-  BACK_RANK.forEach((name, i) => pieces.push(new Piece("white", name, i, 7)));
+  BACK_RANK.forEach((name, i) => pieces.push(new Piece("black", name, i, 0, hp[name])));
+  for (let i = 0; i < BOARD; i++) pieces.push(new Piece("black", "Pawn", i, 1, hp.Pawn));
+  for (let i = 0; i < BOARD; i++) pieces.push(new Piece("white", "Pawn", i, 6, hp.Pawn));
+  BACK_RANK.forEach((name, i) => pieces.push(new Piece("white", name, i, 7, hp[name])));
   return pieces;
 }
