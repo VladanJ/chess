@@ -219,6 +219,7 @@ export class Piece {
       this.pixelY = ty;
       this.col = wc;
       this.row = wr;
+      this.hasMoved = true;
       this.pathIndex += 1;
       if (this.pathIndex >= this.path.length) this.finishMove();
     } else {
@@ -249,6 +250,7 @@ export class Piece {
     this.pixelY = this.targetRow * TILE;
     this.col = this.targetCol;
     this.row = this.targetRow;
+    this.hasMoved = true;
     this.resetKnightVisual();
   }
 
@@ -297,14 +299,12 @@ export class Piece {
   }
 
   private finishMove(): void {
-    const moved = this.col !== this.originCol || this.row !== this.originRow;
     this.moving = false;
     this.waiting = false;
     this.attackTarget = null;
     this.attackOrder = null;
     this.path = [];
     this.pathIndex = 0;
-    if (moved) this.hasMoved = true;
   }
 
   private beginAttack(enemy: Piece): void {
