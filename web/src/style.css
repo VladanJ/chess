@@ -133,6 +133,19 @@ button small {
   font-style: italic;
 }
 
+#set-buttons button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 10px;
+}
+
+#set-buttons img {
+  width: 48px;
+  height: 48px;
+}
+
 #hp-settings {
   margin-top: 24px;
   text-align: left;

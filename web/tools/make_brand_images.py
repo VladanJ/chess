@@ -75,10 +75,10 @@ def make_og_image():
         arrow(surf, start, end, (40, 100, 220), 0.45)
 
     for color, name, c, r, ratio in PIECES:
-        img = pygame.image.load(WEB / "public" / "pieces" / name / f"{color}.png")
-        w = int(TILE * 0.7) if name in ("Pawn", "Rook") else TILE
+        # SVG loads at its intrinsic 100x100; the final image is downscaled, so this stays sharp.
+        img = pygame.image.load(str(WEB / "public" / "pieces" / "war" / name / f"{color}.svg"))
         x, y = BX + int(c * TILE), BY + int(r * TILE)
-        surf.blit(pygame.transform.smoothscale(img, (w, TILE)), (x + (TILE - w) // 2, y))
+        surf.blit(pygame.transform.smoothscale(img, (TILE, TILE)), (x, y))
         hp_bar(surf, x, y, ratio)
 
     for start, end in ATTACKS:

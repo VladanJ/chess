@@ -5,9 +5,7 @@ import {
 import { Piece } from "./piece";
 
 export type Images = Record<Color, Record<PieceName, HTMLImageElement>>;
-
-// Pawn and Rook are drawn 30% narrower, centred in the tile.
-const NARROW: ReadonlySet<PieceName> = new Set<PieceName>(["Pawn", "Rook"]);
+export type PieceSet = "war" | "classic";
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -18,12 +16,12 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-export async function loadPieceImages(): Promise<Images> {
+export async function loadPieceImages(set: PieceSet): Promise<Images> {
   const images = { white: {}, black: {} } as Images;
   await Promise.all(
     PIECE_NAMES.flatMap((name) =>
       (["white", "black"] as const).map(async (color) => {
-        images[color][name] = await loadImage(`pieces/${name}/${color}.png`);
+        images[color][name] = await loadImage(`pieces/${set}/${name}/${color}.svg`);
       }),
     ),
   );
@@ -80,15 +78,10 @@ export function drawAttackDots(
   }
 }
 
-function drawImg(ctx: CanvasRenderingContext2D, img: HTMLImageElement, name: PieceName, x: number, y: number, alpha = 1): void {
+function drawImg(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, alpha = 1): void {
   if (alpha <= 0) return;
   ctx.globalAlpha = alpha;
-  if (NARROW.has(name)) {
-    const w = Math.trunc(TILE * 0.7);
-    ctx.drawImage(img, x + Math.trunc((TILE - w) / 2), y, w, TILE);
-  } else {
-    ctx.drawImage(img, x, y, TILE, TILE);
-  }
+  ctx.drawImage(img, x, y, TILE, TILE);
   ctx.globalAlpha = 1;
 }
 
@@ -151,12 +144,12 @@ export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, images: Image
   const img = images[p.color][p.name];
 
   if (p.name === "Knight" && p.knightPhase === "crossfade") {
-    drawImg(ctx, img, p.name, p.originCol * TILE, p.originRow * TILE, p.knightAlpha / 255);
-    drawImg(ctx, img, p.name, p.targetCol * TILE, p.targetRow * TILE, p.knightDestAlpha / 255);
+    drawImg(ctx, img, p.originCol * TILE, p.originRow * TILE, p.knightAlpha / 255);
+    drawImg(ctx, img, p.targetCol * TILE, p.targetRow * TILE, p.knightDestAlpha / 255);
   } else if (p.name === "Knight" && p.knightPhase === "waiting") {
-    drawImg(ctx, img, p.name, p.originCol * TILE, p.originRow * TILE);
+    drawImg(ctx, img, p.originCol * TILE, p.originRow * TILE);
   } else {
-    drawImg(ctx, img, p.name, p.pixelX, p.pixelY);
+    drawImg(ctx, img, p.pixelX, p.pixelY);
   }
 
   drawHp(ctx, p, now);
@@ -254,13 +247,12 @@ export function drawDeaths(ctx: CanvasRenderingContext2D, pieces: Piece[], image
     const scale = Math.pow(1 - v, 1.5);
     if (scale > 0.01) {
       const img = images[p.color][p.name];
-      const w = NARROW.has(p.name) ? Math.trunc(TILE * 0.7) : TILE;
       ctx.save();
       ctx.globalAlpha = 1 - v * v;
       ctx.translate(cx, cy - 36 * Math.sin(Math.PI * v));
       ctx.rotate(v * Math.PI * 2 * (p.color === "white" ? 1 : -1));
       ctx.scale((1 + squish) * scale, (1 - squish) * scale);
-      ctx.drawImage(img, -w / 2, -TILE / 2, w, TILE);
+      ctx.drawImage(img, -TILE / 2, -TILE / 2, TILE, TILE);
       ctx.restore();
     }
 

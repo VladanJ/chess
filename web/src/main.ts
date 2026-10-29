@@ -7,8 +7,8 @@ import {
 } from "./constants";
 import { Piece, setPieceSpeed } from "./piece";
 import {
-  DEATH_MS, Images, drawAttackDots, drawBoard, drawDeaths, drawHighlights, drawPiece, drawStatus,
-  loadPieceImages,
+  DEATH_MS, Images, PieceSet, drawAttackDots, drawBoard, drawDeaths, drawHighlights, drawPiece,
+  drawStatus, loadPieceImages,
 } from "./render";
 import { createPieces, getLegalTargets, processCombat } from "./rules";
 
@@ -17,6 +17,7 @@ interface Settings {
   aiEnabled: boolean;
   difficulty: number;
   hp: Record<PieceName, number>;
+  pieceSet: PieceSet;
 }
 
 const HP_MIN = 10;
@@ -42,9 +43,11 @@ const ctx = canvas.getContext("2d")!;
 const menu = $("menu");
 const gameOverPanel = $("gameover");
 
-const settings: Settings = { speed: DEFAULT_SPEED, aiEnabled: true, difficulty: 5, hp: { ...HP_MAP } };
+const settings: Settings = {
+  speed: DEFAULT_SPEED, aiEnabled: true, difficulty: 5, hp: { ...HP_MAP }, pieceSet: "war",
+};
 const hpInputs = new Map<PieceName, HTMLInputElement>();
-let images: Images | null = null;
+let images: Record<PieceSet, Images> | null = null;
 let brain: Brain | null = null;
 let game: Game | null = null;
 
@@ -72,6 +75,9 @@ function renderMenu(): void {
     ? (settings.difficulty === 0 ? "OFF" : String(settings.difficulty))
     : "-";
   for (const [name, input] of hpInputs) input.value = String(settings.hp[name]);
+  document.querySelectorAll<HTMLButtonElement>("#set-buttons button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.set === settings.pieceSet);
+  });
 }
 
 function initHpMenu(): void {
@@ -120,6 +126,12 @@ function initMenu(): void {
   $("diff-plus").addEventListener("click", () => {
     settings.difficulty = Math.min(10, settings.difficulty + 1);
     renderMenu();
+  });
+  document.querySelectorAll<HTMLButtonElement>("#set-buttons button").forEach((b) => {
+    b.addEventListener("click", () => {
+      settings.pieceSet = b.dataset.set as PieceSet;
+      renderMenu();
+    });
   });
   $("start").addEventListener("click", startGame);
   $("again").addEventListener("click", showMenu);
@@ -261,8 +273,8 @@ function render(now: number): void {
   if (!game || !images) return;
   const g = game;
   drawHighlights(ctx, g.selected, g.legalTargets, g.pieces);
-  for (const p of g.pieces) drawPiece(ctx, p, images, now);
-  drawDeaths(ctx, g.pieces, images, now);
+  for (const p of g.pieces) drawPiece(ctx, p, images[settings.pieceSet], now);
+  drawDeaths(ctx, g.pieces, images[settings.pieceSet], now);
   drawAttackDots(ctx, g.selected, g.legalTargets, g.pieces);
 
   let text = "Click a piece to select, then click a target.";
@@ -304,8 +316,10 @@ async function boot(): Promise<void> {
   initMenu();
   const startBtn = $<HTMLButtonElement>("start");
   startBtn.disabled = true;
-  const [imgs, b] = await Promise.all([loadPieceImages(), loadBrain("brain.json")]);
-  images = imgs;
+  const [war, classic, b] = await Promise.all([
+    loadPieceImages("war"), loadPieceImages("classic"), loadBrain("brain.json"),
+  ]);
+  images = { war, classic };
   brain = b;
   startBtn.disabled = false;
   requestAnimationFrame(frame);
