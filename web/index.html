@@ -30,6 +30,17 @@
     <main id="app">
       <canvas id="board"></canvas>
 
+      <div id="editor" class="hidden">
+        <div id="palette"></div>
+        <div class="editor-actions">
+          <button id="ed-clear">Clear</button>
+          <button id="ed-standard">Standard</button>
+          <button id="ed-menu">Menu</button>
+          <button id="ed-play" class="active">Play</button>
+        </div>
+        <p class="hint">Pick a piece, then click squares. Right-click erases.</p>
+      </div>
+
       <div id="menu" class="overlay">
         <div class="panel">
           <h1>Real-Time Chess</h1>
@@ -65,15 +76,41 @@
             <button data-set="classic"><img src="pieces/classic/Knight/white.svg" alt="" />Classic</button>
           </div>
 
-          <details id="hp-settings">
-            <summary>Piece HP</summary>
-            <div id="hp-grid" class="hp-grid"></div>
-            <p class="hint">Each attacker deals 10 HP per second.</p>
-            <button id="hp-reset">Reset to defaults</button>
-          </details>
+          <div class="row">
+            <button id="options-btn">Options</button>
+          </div>
 
           <button id="start" class="primary">Start Game</button>
           <p class="hint">Enter to start</p>
+          <button id="sandbox-btn" class="hidden">Board editor</button>
+        </div>
+      </div>
+
+      <div id="options" class="overlay hidden">
+        <div class="panel">
+          <h1>Options</h1>
+
+          <h2>Pawn promotion</h2>
+          <div class="row" id="promo-mode">
+            <button data-promo="auto">Auto-Queen</button>
+            <button data-promo="choose">Choose piece</button>
+          </div>
+          <p class="hint">Choose: pick Queen, Rook, Bishop or Knight on the pawn's square. The game keeps running.</p>
+
+          <h2>Formation defense</h2>
+          <div class="row" id="guard-mode">
+            <button data-guard="off">Off</button>
+            <button data-guard="on">On</button>
+          </div>
+          <p class="hint">A piece on a square that friendly pieces could move to takes less damage:
+            1 guard = 50% less, 2 = 75% less, 3 = 87.5% less, and so on.</p>
+
+          <h2>Piece HP</h2>
+          <div id="hp-grid" class="hp-grid"></div>
+          <p class="hint">Each attacker deals 10 HP per second.</p>
+          <button id="hp-reset">Reset HP to defaults</button>
+
+          <button id="options-back" class="primary">Back</button>
         </div>
       </div>
 

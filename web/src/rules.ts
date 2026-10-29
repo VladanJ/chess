@@ -109,14 +109,15 @@ export function getLegalTargets(piece: Piece, pieces: Piece[]): Tile[] {
 }
 
 /** Only the defender takes damage. An attacker is a moving piece, settled on
- *  its tile, whose next tile overlaps a tile the defender occupies. */
-export function processCombat(pieces: Piece[], dt: number): void {
+ *  its tile, whose next tile overlaps a tile the defender occupies. With
+ *  *guarded*, each friendly piece covering the hit square halves the damage. */
+export function processCombat(pieces: Piece[], dt: number, guarded = false): void {
   const damage = DAMAGE_PER_SECOND * dt;
 
   for (const p of pieces) p.beingAttacked = false;
 
   // Collect hits first so simultaneous lethal blows land regardless of array order.
-  const hits: Piece[] = [];
+  const hits: [Piece, number][] = [];
   for (const attacker of pieces) {
     if (!attacker.alive || !attacker.moving) continue;
     if (!attacker.hasReachedTile()) continue;
@@ -131,12 +132,15 @@ export function processCombat(pieces: Piece[], dt: number): void {
       const hit = (defender.col === target[0] && defender.row === target[1])
         || (defender.moving && !defender.hasReachedTile()
             && sameTile(defender.nextTile, target[0], target[1]));
-      if (hit) hits.push(defender);
+      if (hit) {
+        const guards = guarded ? guardCount(defender, target[0], target[1], pieces) : 0;
+        hits.push([defender, damage * 0.5 ** guards]);
+      }
     }
   }
 
-  for (const defender of hits) {
-    defender.hp -= damage;
+  for (const [defender, dmg] of hits) {
+    defender.hp -= dmg;
     defender.beingAttacked = true;
     if (defender.hp <= 0) {
       defender.hp = 0;
@@ -145,19 +149,44 @@ export function processCombat(pieces: Piece[], dt: number): void {
   }
 }
 
+/** True if stationary *q* could move to (col, row) were it empty: pawns cover diagonals only. */
+function covers(q: Piece, col: number, row: number, pieces: Piece[]): boolean {
+  const dc = col - q.col;
+  const dr = row - q.row;
+  const adc = Math.abs(dc);
+  const adr = Math.abs(dr);
+  if (adc === 0 && adr === 0) return false;
+  switch (q.name) {
+    case "Pawn": return adc === 1 && dr === (q.color === "white" ? -1 : 1);
+    case "Knight": return adc * adr === 2;
+    case "King": return adc <= 1 && adr <= 1;
+    case "Rook": if (dc !== 0 && dr !== 0) return false; break;
+    case "Bishop": if (adc !== adr) return false; break;
+    case "Queen": if (dc !== 0 && dr !== 0 && adc !== adr) return false; break;
+  }
+  const sc = Math.sign(dc);
+  const sr = Math.sign(dr);
+  for (let c = q.col + sc, r = q.row + sr; c !== col || r !== row; c += sc, r += sr) {
+    if (anyPieceAt(pieces, c, r, null)) return false;
+  }
+  return true;
+}
+
+/** Number of idle friendly pieces guarding (col, row) for *defender*. */
+export function guardCount(defender: Piece, col: number, row: number, pieces: Piece[]): number {
+  let n = 0;
+  for (const q of pieces) {
+    if (q !== defender && q.alive && q.color === defender.color && !q.moving && covers(q, col, row, pieces)) n++;
+  }
+  return n;
+}
+
 const BACK_RANK: PieceName[] = ["Rook", "Knight", "Bishop", "Queen", "King", "Bishop", "Knight", "Rook"];
 
-/** Pawns that have come to rest on the far rank become Queens. Returns the promoted pieces. */
-export function promotePawns(pieces: Piece[], queenHp: number): Piece[] {
-  const promoted: Piece[] = [];
-  for (const p of pieces) {
-    const lastRow = p.color === "white" ? 0 : BOARD - 1;
-    if (p.alive && p.name === "Pawn" && !p.moving && p.row === lastRow) {
-      p.promote("Queen", queenHp);
-      promoted.push(p);
-    }
-  }
-  return promoted;
+/** Pawns that have come to rest on the far rank. */
+export function pawnsToPromote(pieces: Piece[]): Piece[] {
+  return pieces.filter((p) => p.alive && p.name === "Pawn" && !p.moving
+    && p.row === (p.color === "white" ? 0 : BOARD - 1));
 }
 
 export function createPieces(hp: Record<PieceName, number> = HP_MAP): Piece[] {

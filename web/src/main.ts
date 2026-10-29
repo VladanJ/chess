@@ -2,15 +2,15 @@ import "./style.css";
 import { AIController } from "./ai";
 import { Brain, NNPolicy, loadBrain } from "./brain";
 import {
-  BASE_PIECE_SPEED, Color, DEFAULT_SPEED, HEIGHT, HP_MAP, PIECE_NAMES, PieceName, SPEED_PRESETS, SpeedKey,
-  TILE, Tile, WIDTH, inBounds,
+  BASE_PIECE_SPEED, BOARD, Color, DEFAULT_SPEED, HEIGHT, HP_MAP, PIECE_NAMES, PieceName, SPEED_PRESETS,
+  SpeedKey, TILE, Tile, WIDTH, inBounds,
 } from "./constants";
 import { Piece, setPieceSpeed } from "./piece";
 import {
-  DEATH_MS, Images, PieceSet, drawAttackDots, drawBoard, drawDeaths, drawHighlights, drawPiece,
-  drawStatus, loadPieceImages,
+  DEATH_MS, Images, PieceSet, drawAttackDots, drawBoard, drawDeaths, drawGuards, drawHighlights, drawPiece,
+  drawPromotionChoices, drawStatus, loadPieceImages, promotionChoiceAt,
 } from "./render";
-import { createPieces, getLegalTargets, processCombat, promotePawns } from "./rules";
+import { createPieces, getLegalTargets, pawnsToPromote, processCombat } from "./rules";
 
 interface Settings {
   speed: SpeedKey;
@@ -18,6 +18,8 @@ interface Settings {
   difficulty: number;
   hp: Record<PieceName, number>;
   pieceSet: PieceSet;
+  promotion: "auto" | "choose";
+  guard: boolean; // formation defense
 }
 
 const HP_MIN = 10;
@@ -34,7 +36,17 @@ interface Game {
   cooldownMs: number;
   lastActionMs: Record<Color, number>;
   whiteStarted: boolean;
+  sandbox: boolean; // board-editor game: both sides, no cooldown
 }
+
+interface PieceSpec {
+  color: Color;
+  name: PieceName;
+  col: number;
+  row: number;
+}
+
+type Brush = { color: Color; name: PieceName } | "erase";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -42,14 +54,21 @@ const canvas = $<HTMLCanvasElement>("board");
 const ctx = canvas.getContext("2d")!;
 const menu = $("menu");
 const gameOverPanel = $("gameover");
+const editorPanel = $("editor");
+// Hidden board editor, enabled with ?sandbox in the URL.
+const SANDBOX = new URLSearchParams(location.search).has("sandbox");
 
 const settings: Settings = {
   speed: DEFAULT_SPEED, aiEnabled: true, difficulty: 5, hp: { ...HP_MAP }, pieceSet: "war",
+  promotion: "auto", guard: false,
 };
 const hpInputs = new Map<PieceName, HTMLInputElement>();
 let images: Record<PieceSet, Images> | null = null;
 let brain: Brain | null = null;
 let game: Game | null = null;
+let editorPieces: Piece[] | null = null; // non-null while the editor is open
+let brush: Brush = { color: "white", name: "Pawn" };
+let sandboxLayout: PieceSpec[] = [];
 
 // --- Canvas sizing (sharp on HiDPI screens) ---------------------------------
 
@@ -78,6 +97,27 @@ function renderMenu(): void {
   document.querySelectorAll<HTMLButtonElement>("#set-buttons button").forEach((b) => {
     b.classList.toggle("active", b.dataset.set === settings.pieceSet);
   });
+  document.querySelectorAll<HTMLButtonElement>("#promo-mode button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.promo === settings.promotion);
+  });
+  document.querySelectorAll<HTMLButtonElement>("#guard-mode button").forEach((b) => {
+    b.classList.toggle("active", (b.dataset.guard === "on") === settings.guard);
+  });
+}
+
+const optionsPanel = $("options");
+
+function openOptions(): void {
+  menu.classList.add("hidden");
+  optionsPanel.classList.remove("hidden");
+  renderMenu();
+}
+
+function closeOptions(): void {
+  // Blur fires the input's change event so a just-typed HP value is applied.
+  if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur();
+  optionsPanel.classList.add("hidden");
+  menu.classList.remove("hidden");
 }
 
 function initHpMenu(): void {
@@ -105,9 +145,77 @@ function initHpMenu(): void {
 
 function showMenu(): void {
   game = null;
+  closeEditor();
   gameOverPanel.classList.add("hidden");
   menu.classList.remove("hidden");
   renderMenu();
+}
+
+// --- Board editor ------------------------------------------------------------
+
+function makePiece(s: PieceSpec): Piece {
+  const p = new Piece(s.color, s.name, s.col, s.row, settings.hp[s.name]);
+  // Pawns placed off their home rank have no double step.
+  if (s.name === "Pawn") p.hasMoved = s.row !== (s.color === "white" ? BOARD - 2 : 1);
+  return p;
+}
+
+function renderPalette(): void {
+  const palette = $("palette");
+  palette.replaceChildren();
+  const add = (b: Brush, el: Node, title: string) => {
+    const btn = document.createElement("button");
+    btn.title = title;
+    btn.append(el);
+    btn.classList.toggle("active", JSON.stringify(b) === JSON.stringify(brush));
+    btn.addEventListener("click", () => { brush = b; renderPalette(); });
+    palette.append(btn);
+  };
+  for (const color of ["white", "black"] as const) {
+    for (const name of PIECE_NAMES) {
+      const img = document.createElement("img");
+      img.src = `pieces/${settings.pieceSet}/${name}/${color}.svg`;
+      img.alt = "";
+      add({ color, name }, img, `${color} ${name}`);
+    }
+    if (color === "white") add("erase", document.createTextNode("\u2715"), "Erase");
+  }
+}
+
+function openEditor(): void {
+  game = null;
+  menu.classList.add("hidden");
+  gameOverPanel.classList.add("hidden");
+  editorPanel.classList.remove("hidden");
+  editorPieces = sandboxLayout.length > 0 ? sandboxLayout.map(makePiece) : createPieces(settings.hp);
+  renderPalette();
+}
+
+function closeEditor(): void {
+  editorPieces = null;
+  editorPanel.classList.add("hidden");
+}
+
+function editorClick(col: number, row: number, erase: boolean): void {
+  if (!editorPieces) return;
+  editorPieces = editorPieces.filter((p) => p.col !== col || p.row !== row);
+  if (!erase && brush !== "erase") editorPieces.push(makePiece({ ...brush, col, row }));
+}
+
+function initEditor(): void {
+  if (!SANDBOX) return;
+  const btn = $("sandbox-btn");
+  btn.classList.remove("hidden");
+  btn.addEventListener("click", openEditor);
+  $("ed-clear").addEventListener("click", () => { editorPieces = []; });
+  $("ed-standard").addEventListener("click", () => { editorPieces = createPieces(settings.hp); });
+  $("ed-menu").addEventListener("click", showMenu);
+  $("ed-play").addEventListener("click", () => {
+    if (!editorPieces) return;
+    sandboxLayout = editorPieces.map((p) => ({ color: p.color, name: p.name, col: p.col, row: p.row }));
+    closeEditor();
+    startGame(sandboxLayout);
+  });
 }
 
 function initMenu(): void {
@@ -133,22 +241,38 @@ function initMenu(): void {
       renderMenu();
     });
   });
-  $("start").addEventListener("click", startGame);
-  $("again").addEventListener("click", showMenu);
+  document.querySelectorAll<HTMLButtonElement>("#promo-mode button").forEach((b) => {
+    b.addEventListener("click", () => {
+      settings.promotion = b.dataset.promo as Settings["promotion"];
+      renderMenu();
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("#guard-mode button").forEach((b) => {
+    b.addEventListener("click", () => {
+      settings.guard = b.dataset.guard === "on";
+      renderMenu();
+    });
+  });
+  $("options-btn").addEventListener("click", openOptions);
+  $("options-back").addEventListener("click", closeOptions);
+  $("start").addEventListener("click", () => startGame());
+  $("again").addEventListener("click", () => (game?.sandbox ? openEditor() : showMenu()));
   initHpMenu();
+  initEditor();
   renderMenu();
 }
 
 // --- Game lifecycle ----------------------------------------------------------
 
-function startGame(): void {
+function startGame(layout: PieceSpec[] | null = null): void {
   if (!images) return;
+  const sandbox = layout !== null;
   const moveInterval = SPEED_PRESETS[settings.speed];
   setPieceSpeed((BASE_PIECE_SPEED * SPEED_PRESETS.fast) / moveInterval);
   Piece.attackCounter = 0;
 
   // Difficulty 0 means the AI is disabled.
-  const aiEnabled = settings.aiEnabled && settings.difficulty > 0;
+  const aiEnabled = !sandbox && settings.aiEnabled && settings.difficulty > 0;
   let ai: AIController | null = null;
   if (aiEnabled) {
     ai = new AIController("black", settings.difficulty, brain ? new NNPolicy(brain) : null);
@@ -156,10 +280,10 @@ function startGame(): void {
     ai.actionsPerSecond = 1.0 / moveInterval;
   }
 
-  const cooldownMs = Math.trunc(moveInterval * 1000);
+  const cooldownMs = sandbox ? 0 : Math.trunc(moveInterval * 1000);
   const readyAt = performance.now() - cooldownMs;
   game = {
-    pieces: createPieces(settings.hp),
+    pieces: layout ? layout.map(makePiece) : createPieces(settings.hp),
     ai,
     myColor: aiEnabled ? "white" : null,
     selected: null,
@@ -168,7 +292,8 @@ function startGame(): void {
     winner: null,
     cooldownMs,
     lastActionMs: { white: readyAt, black: readyAt },
-    whiteStarted: false,
+    whiteStarted: sandbox,
+    sandbox,
   };
   menu.classList.add("hidden");
   gameOverPanel.classList.add("hidden");
@@ -191,7 +316,20 @@ function deselect(g: Game): void {
   g.legalTargets = [];
 }
 
+/** Pawns on the far rank waiting for the player to pick a piece (AI pawns never wait). */
+function pendingPromotions(g: Game): Piece[] {
+  if (settings.promotion !== "choose") return [];
+  return pawnsToPromote(g.pieces).filter((p) => !g.ai || p.color !== g.ai.color);
+}
+
 function handleClick(g: Game, mx: number, my: number): void {
+  const choice = promotionChoiceAt(pendingPromotions(g), mx, my);
+  if (choice) {
+    const [pawn, name] = choice;
+    if (g.myColor === null || pawn.color === g.myColor) pawn.promote(name, settings.hp[name]);
+    return;
+  }
+
   // Stop buttons first.
   for (const p of g.pieces) {
     if (p.stopBtnHit(mx, my)) {
@@ -233,16 +371,28 @@ function handleClick(g: Game, mx: number, my: number): void {
 }
 
 canvas.addEventListener("pointerdown", (e) => {
-  if (!game || game.gameOver || e.button !== 0) return;
   const rect = canvas.getBoundingClientRect();
   const mx = ((e.clientX - rect.left) * WIDTH) / rect.width;
   const my = ((e.clientY - rect.top) * HEIGHT) / rect.height;
+  if (editorPieces) {
+    const col = Math.floor(mx / TILE);
+    const row = Math.floor(my / TILE);
+    if (inBounds(col, row)) editorClick(col, row, e.button === 2);
+    return;
+  }
+  if (!game || game.gameOver || e.button !== 0) return;
   handleClick(game, mx, my);
 });
 
+canvas.addEventListener("contextmenu", (e) => {
+  if (editorPieces) e.preventDefault();
+});
+
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && game) showMenu();
-  else if (e.key === "Enter" && !game && !menu.classList.contains("hidden")) {
+  if (e.key === "Escape" && !optionsPanel.classList.contains("hidden")) closeOptions();
+  else if (e.key === "Escape" && game?.sandbox) openEditor();
+  else if (e.key === "Escape" && (game || editorPieces)) showMenu();
+  else if (e.key === "Enter" && !game && !editorPieces && !menu.classList.contains("hidden")) {
     // Blur fires the input's change event so a just-typed HP value is applied.
     if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur();
     startGame();
@@ -260,9 +410,12 @@ function simulate(g: Game, dt: number): void {
   if (g.ai && g.whiteStarted) g.ai.update(dt, g.pieces);
 
   // Combat before movement so damage applies until full arrival.
-  processCombat(g.pieces, dt);
+  processCombat(g.pieces, dt, settings.guard);
   for (const p of g.pieces) p.update(dt, g.pieces);
-  promotePawns(g.pieces, settings.hp.Queen);
+  const waiting = pendingPromotions(g);
+  for (const p of pawnsToPromote(g.pieces)) {
+    if (!waiting.includes(p)) p.promote("Queen", settings.hp.Queen);
+  }
 
   for (const p of g.pieces) {
     if (p.name === "King" && !p.alive) endGame(g, p.color === "white" ? "Black" : "White");
@@ -274,14 +427,32 @@ function simulate(g: Game, dt: number): void {
 
 function render(now: number): void {
   drawBoard(ctx);
-  if (!game || !images) return;
+  if (!images) return;
+  const imgs = images[settings.pieceSet];
+
+  if (editorPieces) {
+    for (const p of editorPieces) drawPiece(ctx, p, imgs, now);
+    if (settings.guard) drawGuards(ctx, editorPieces);
+    const count = (c: Color) => editorPieces!.filter((p) => p.color === c).length;
+    drawStatus(ctx, {
+      text: `Board editor: ${count("white")} white, ${count("black")} black`,
+      textColor: "rgb(220,220,220)",
+      meters: [],
+    });
+    return;
+  }
+
+  if (!game) return;
   const g = game;
   drawHighlights(ctx, g.selected, g.legalTargets, g.pieces);
-  for (const p of g.pieces) drawPiece(ctx, p, images[settings.pieceSet], now);
-  drawDeaths(ctx, g.pieces, images[settings.pieceSet], now);
+  for (const p of g.pieces) drawPiece(ctx, p, imgs, now);
+  if (settings.guard) drawGuards(ctx, g.pieces);
+  drawDeaths(ctx, g.pieces, imgs, now);
   drawAttackDots(ctx, g.selected, g.legalTargets, g.pieces);
+  const waiting = g.gameOver ? [] : pendingPromotions(g);
+  drawPromotionChoices(ctx, waiting, imgs, now);
 
-  let text = "Click a piece to select, then click a target.";
+  let text = g.sandbox ? "Sandbox: move either side. Esc = editor." : "Select a piece, then a target.";
   let textColor = "rgb(180,180,180)";
   if (g.gameOver) {
     text = `${g.winner} wins!`;
@@ -289,6 +460,9 @@ function render(now: number): void {
   } else if (g.selected) {
     text = `Selected: ${g.selected.color} ${g.selected.name}`;
     textColor = "rgb(220,220,220)";
+  } else if (waiting.length > 0) {
+    text = "Promote: pick a piece on the pawn's square.";
+    textColor = "rgb(246,201,69)";
   } else if (!g.whiteStarted) {
     text = "White moves first.";
   }

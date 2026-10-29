@@ -3,11 +3,44 @@ import {
   PIECE_NAMES, PieceName, STATUS_H, STOP_BTN_RADIUS, TILE, Tile, WIDTH, sameTile,
 } from "./constants";
 import { Piece } from "./piece";
+import { guardCount } from "./rules";
 
 export type Images = Record<Color, Record<PieceName, HTMLImageElement>>;
 export type PieceSet = "war" | "classic";
 
 const PROMO_MS = 800;
+const PROMO_CHOICES: readonly PieceName[] = ["Queen", "Rook", "Bishop", "Knight"];
+const PROMO_SIZE = TILE / 2 - 4;
+
+/** Top-left of choice *i* in the 2x2 grid covering the pawn's square. */
+function promoSlot(p: Piece, i: number): [number, number] {
+  return [p.col * TILE + 2 + (i % 2) * (PROMO_SIZE + 4), p.row * TILE + 2 + Math.floor(i / 2) * (PROMO_SIZE + 4)];
+}
+
+export function drawPromotionChoices(ctx: CanvasRenderingContext2D, pawns: Piece[], images: Images, now: number): void {
+  const pulse = 0.6 + 0.4 * Math.sin(now / 150);
+  for (const p of pawns) {
+    PROMO_CHOICES.forEach((name, i) => {
+      const [x, y] = promoSlot(p, i);
+      ctx.fillStyle = "rgba(24,26,32,0.85)";
+      ctx.fillRect(x, y, PROMO_SIZE, PROMO_SIZE);
+      ctx.drawImage(images[p.color][name], x, y, PROMO_SIZE, PROMO_SIZE);
+      ctx.strokeStyle = `rgba(246,201,69,${pulse})`;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, PROMO_SIZE - 2, PROMO_SIZE - 2);
+    });
+  }
+}
+
+export function promotionChoiceAt(pawns: Piece[], mx: number, my: number): [Piece, PieceName] | null {
+  for (const p of pawns) {
+    for (let i = 0; i < PROMO_CHOICES.length; i++) {
+      const [x, y] = promoSlot(p, i);
+      if (mx >= x && mx < x + PROMO_SIZE && my >= y && my < y + PROMO_SIZE) return [p, PROMO_CHOICES[i]];
+    }
+  }
+  return null;
+}
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -185,6 +218,41 @@ export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, images: Image
   if (p.moving) drawStopBtn(ctx, p);
 }
 
+const MAX_SHIELDS = 4;
+
+function shield(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const w = 13;
+  const h = 15;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w, y + h * 0.45);
+  ctx.quadraticCurveTo(x + w, y + h * 0.85, x + w / 2, y + h);
+  ctx.quadraticCurveTo(x, y + h * 0.85, x, y + h * 0.45);
+  ctx.closePath();
+  ctx.fillStyle = "#d3dae4";
+  ctx.fill();
+  ctx.strokeStyle = "#2b2b36";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x + w / 2, y + 2.5);
+  ctx.lineTo(x + w / 2, y + h - 3);
+  ctx.strokeStyle = "#4678b4";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+/** One small shield per friendly guard (formation defense), top-left of each piece. */
+export function drawGuards(ctx: CanvasRenderingContext2D, pieces: Piece[]): void {
+  for (const p of pieces) {
+    if (!p.alive) continue;
+    const n = Math.min(guardCount(p, p.col, p.row, pieces), MAX_SHIELDS);
+    // Back to front, each peeking out to the right of the one before it.
+    for (let i = n - 1; i >= 0; i--) shield(ctx, p.pixelX + 4 + i * 5, p.pixelY + 4);
+  }
+}
+
 export const DEATH_MS = 1000;
 const SPARKLE_COLORS = ["#ffd166", "#ff8fab", "#8ecae6", "#b8f2a0"];
 
@@ -308,9 +376,6 @@ export function drawStatus(ctx: CanvasRenderingContext2D, s: StatusInfo): void {
   ctx.fillRect(0, y0, WIDTH, STATUS_H);
   ctx.font = "22px Consolas, 'Courier New', monospace";
   ctx.textBaseline = "middle";
-  ctx.textAlign = "left";
-  ctx.fillStyle = s.textColor;
-  ctx.fillText(s.text, 10, y0 + STATUS_H / 2);
 
   const barW = s.meters.length > 1 ? 110 : 150;
   const barH = 18;
@@ -334,4 +399,16 @@ export function drawStatus(ctx: CanvasRenderingContext2D, s: StatusInfo): void {
     }
     x -= 16;
   }
+
+  // Shrink the message to fit whatever space the meters leave.
+  const maxW = x - 10;
+  let size = 22;
+  ctx.font = `${size}px Consolas, 'Courier New', monospace`;
+  while (size > 13 && ctx.measureText(s.text).width > maxW) {
+    size -= 1;
+    ctx.font = `${size}px Consolas, 'Courier New', monospace`;
+  }
+  ctx.textAlign = "left";
+  ctx.fillStyle = s.textColor;
+  ctx.fillText(s.text, 10, y0 + STATUS_H / 2, maxW);
 }
