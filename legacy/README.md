@@ -1,4 +1,7 @@
-# Real-Time Chess
+# Real-Time Chess (legacy desktop version)
+
+> **Legacy:** this Python/Pygame version is no longer developed. The current game is the
+> browser version in [`web/`](../web), live at https://real-time-chess.com.
 
 A real-time strategy board game that plays like chess — but with no turns. Both players move simultaneously, pieces have hit points, and combat happens on contact. The game ends when a King is destroyed.
 
