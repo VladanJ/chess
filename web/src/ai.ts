@@ -114,7 +114,8 @@ export class AIController {
     const idle = pieces.filter((p) => p.alive && p.color === this.color && !p.moving);
     if (idle.length === 0) return false;
 
-    if (this.policy !== null) {
+    // Below max difficulty, some moves fall back to the weaker heuristic so the brain isn't always at full strength.
+    if (this.policy !== null && Math.random() >= this.randomness) {
       const choice = this.policy.choose(idle, pieces, this.color);
       if (choice === null) return false;
       choice[0].startMove(choice[1][0], choice[1][1]);
