@@ -6,14 +6,15 @@
  *
  *   npm run train -- --games 3000            # continue from the current brain
  *   npm run train -- --games 3000 --fresh    # start from random brains
+ *   npm run train -- --games 0 --compare other.json --report-games 600   # benchmark only
  */
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { AIController } from "../src/ai";
-import { Brain, BrainWeights, NNPolicy, gaussian } from "../src/brain";
-import { BASE_PIECE_SPEED, Color, HP_MAP, PIECE_VALUE, SPEED_PRESETS } from "../src/constants";
+import { Brain, BrainWeights, N_FEATURES, NNPolicy, gaussian, padInputs } from "../src/brain";
+import { BASE_PIECE_SPEED, Color, HP_MAP, PIECE_VALUE, SPEED_PRESETS, SpeedKey } from "../src/constants";
 import { Piece, setPieceSpeed } from "../src/piece";
 import { createPieces, pawnsToPromote, processCombat } from "../src/rules";
 
@@ -21,10 +22,11 @@ const WEB = fileURLToPath(new URL("..", import.meta.url));
 const OUT = `${WEB}public/brain.json`;
 const BACKUP = `${WEB}tools/brain.backup.json`;
 
-// Train at the default game speed with the AI on the player's cadence.
-const MOVE_INTERVAL = SPEED_PRESETS.medium;
-const DT = 0.25;
-const MAX_TIME = 900; // simulated seconds before remaining material decides
+// Games are played at every game speed with the AI on the player's cadence.
+// Damage per second is fixed, so speeds genuinely play differently.
+const SPEEDS = Object.keys(SPEED_PRESETS) as SpeedKey[];
+const STEPS_PER_MOVE = 12;     // simulation steps per move interval
+const MOVES_PER_GAME = 300;    // move intervals before remaining material decides
 
 // --- Headless game -----------------------------------------------------------
 
@@ -36,16 +38,18 @@ const kingAlive = (pieces: Piece[], color: Color) =>
   pieces.some((p) => p.alive && p.color === color && p.name === "King");
 
 /** +1 white wins, -1 black wins, 0 draw. */
-function playGame(white: AIController, black: AIController): number {
-  setPieceSpeed((BASE_PIECE_SPEED * SPEED_PRESETS.fast) / MOVE_INTERVAL);
+function playGame(white: AIController, black: AIController, speed: SpeedKey): number {
+  const interval = SPEED_PRESETS[speed];
+  const dt = interval / STEPS_PER_MOVE;
+  setPieceSpeed((BASE_PIECE_SPEED * SPEED_PRESETS.fast) / interval);
   Piece.attackCounter = 0;
   const pieces = createPieces(HP_MAP);
-  white.actionsPerSecond = black.actionsPerSecond = 1 / MOVE_INTERVAL;
-  for (let t = 0; t < MAX_TIME; t += DT) {
-    white.update(DT, pieces);
-    black.update(DT, pieces);
-    processCombat(pieces, DT);
-    for (const p of pieces) p.update(DT, pieces);
+  white.actionsPerSecond = black.actionsPerSecond = 1 / interval;
+  for (let step = 0; step < MOVES_PER_GAME * STEPS_PER_MOVE; step++) {
+    white.update(dt, pieces);
+    black.update(dt, pieces);
+    processCombat(pieces, dt);
+    for (const p of pieces) p.update(dt, pieces);
     for (const p of pawnsToPromote(pieces)) p.promote("Queen", HP_MAP.Queen);
     const wk = kingAlive(pieces, "white");
     const bk = kingAlive(pieces, "black");
@@ -59,6 +63,7 @@ interface Task {
   b: BrainWeights | null; // null = built-in heuristic AI at max difficulty
   aWhite: boolean;
   sigma: number;
+  speed: SpeedKey;
 }
 
 /** Result from brain a's point of view: +1 win, -1 loss, 0 draw. */
@@ -67,7 +72,7 @@ function runTask(t: Task): number {
   const bColor: Color = t.aWhite ? "black" : "white";
   const a = new AIController(aColor, 10, new NNPolicy(new Brain(t.a), t.sigma));
   const b = new AIController(bColor, 10, t.b ? new NNPolicy(new Brain(t.b), t.sigma) : null);
-  const r = t.aWhite ? playGame(a, b) : playGame(b, a);
+  const r = t.aWhite ? playGame(a, b, t.speed) : playGame(b, a, t.speed);
   return t.aWhite ? r : -r;
 }
 
@@ -121,7 +126,9 @@ function randomLayer(nIn: number, nOut: number): BrainWeights["layers"][number] 
   return { w: Array.from({ length: nOut }, () => Array.from({ length: nIn }, u)), b: Array.from({ length: nOut }, u) };
 }
 
-const randomBrain = (): BrainWeights => ({ layers: [randomLayer(10, 24), randomLayer(24, 24), randomLayer(24, 1)] });
+const randomBrain = (): BrainWeights => ({
+  layers: [randomLayer(N_FEATURES, 24), randomLayer(24, 24), randomLayer(24, 1)],
+});
 
 const mutate = (w: BrainWeights, sigma: number): BrainWeights => ({
   layers: w.layers.map((l) => ({
@@ -146,17 +153,19 @@ interface Options {
   reportGames: number;
   fresh: boolean;
   workers: number;
+  compare: string; // brain file to benchmark against instead of the current one
 }
 
 function parseArgs(): Options {
   const o: Options = {
     games: 2000, pop: 8, sigma: 0.15, explore: 0.05, evalGames: 16, confirmGames: 64, h2hGames: 8, reportGames: 100,
-    fresh: false, workers: cpus().length,
+    fresh: false, workers: cpus().length, compare: "",
   };
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i].replace(/^--/, "").replace(/-(\w)/g, (_, c: string) => c.toUpperCase()) as keyof Options;
     if (key === "fresh") o.fresh = true;
+    else if (key === "compare") o.compare = argv[++i];
     else if (key in o) (o[key] as number) = Number(argv[++i]);
     else throw new Error(`Unknown option ${argv[i]}`);
   }
@@ -166,14 +175,20 @@ function parseArgs(): Options {
 async function train(): Promise<void> {
   const o = parseArgs();
   const pool = new Pool(o.workers);
-  const vsHeuristic = async (w: BrainWeights, n: number) =>
-    score(await pool.run(Array.from({ length: n }, (_, i) => ({ a: w, b: null, aWhite: i % 2 === 0, sigma: 0 }))));
+  // Benchmarks cycle through every colour x speed combination.
+  const benchTasks = (a: BrainWeights, b: BrainWeights | null, n: number, only?: SpeedKey): Task[] =>
+    Array.from({ length: n }, (_, i) => ({
+      a, b, aWhite: i % 2 === 0, sigma: 0, speed: only ?? SPEEDS[Math.floor(i / 2) % SPEEDS.length],
+    }));
+  const vsHeuristic = async (w: BrainWeights, n: number, only?: SpeedKey) =>
+    score(await pool.run(benchTasks(w, null, n, only)));
   const headToHead = async (a: BrainWeights, b: BrainWeights, n: number) =>
-    score(await pool.run(Array.from({ length: n }, (_, i) => ({ a, b, aWhite: i % 2 === 0, sigma: 0 }))));
+    score(await pool.run(benchTasks(a, b, n)));
 
-  const previous: BrainWeights | null = existsSync(OUT) ? JSON.parse(readFileSync(OUT, "utf8")) : null;
-  if (previous) copyFileSync(OUT, BACKUP);
-  const seed = !o.fresh && previous ? previous : null;
+  const current: BrainWeights | null = existsSync(OUT) ? JSON.parse(readFileSync(OUT, "utf8")) : null;
+  const previous: BrainWeights | null = o.compare ? JSON.parse(readFileSync(o.compare, "utf8")) : current;
+  if (current && o.games > 0) copyFileSync(OUT, BACKUP);
+  const seed = !o.fresh && current ? padInputs(current) : null;
   let population = seed
     ? [seed, ...Array.from({ length: o.pop - 1 }, () => mutate(seed, o.sigma))]
     : Array.from({ length: o.pop }, randomBrain);
@@ -197,6 +212,7 @@ async function train(): Promise<void> {
     });
     const outcomes = await pool.run(pairs.map(([i, j]) => ({
       a: population[i], b: population[j], aWhite: Math.random() < 0.5, sigma: o.explore,
+      speed: SPEEDS[Math.floor(Math.random() * SPEEDS.length)],
     })));
     games += pairs.length;
     const scores = new Array<number>(o.pop).fill(0);
@@ -241,12 +257,17 @@ async function train(): Promise<void> {
   }
 
   console.log(`\nFinal report (${o.reportGames} games each):`);
-  console.log(`  champion vs heuristic AI: ${(await vsHeuristic(champion, o.reportGames) * 100).toFixed(0)}%`);
-  if (previous && champion !== previous) {
-    console.log(`  champion vs previous brain: ${(await headToHead(champion, previous, o.reportGames) * 100).toFixed(0)}%`);
+  const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+  for (const speed of SPEEDS) {
+    const now = await vsHeuristic(champion, o.reportGames, speed);
+    const before = previous ? ` (previous brain ${pct(await vsHeuristic(previous, o.reportGames, speed))})` : "";
+    console.log(`  vs heuristic AI at ${speed}: ${pct(now)}${before}`);
   }
-  if (!existsSync(OUT) || champion === seed) console.log("  (no improvement found; public/brain.json unchanged)");
-  console.log(`Done in ${secs()}s. Previous brain backed up to tools/brain.backup.json`);
+  if (previous && (champion !== seed || o.compare)) {
+    console.log(`  champion vs previous brain: ${pct(await headToHead(champion, previous, o.reportGames))}`);
+  }
+  if (champion === seed && o.games > 0) console.log("  (no improvement found; public/brain.json unchanged)");
+  console.log(`Done in ${secs()}s.${o.games > 0 ? " Previous brain backed up to tools/brain.backup.json" : ""}`);
   await pool.close();
 }
 

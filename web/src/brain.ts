@@ -1,12 +1,15 @@
 import { BOARD, Color, PIECE_VALUE } from "./constants";
 import { Move, Policy } from "./ai";
 import { Piece } from "./piece";
-import { getLegalTargets } from "./rules";
+import { getLegalTargets, coverCount } from "./rules";
 
-// Mirrors brain.py: MLP 10 -> 24 -> 24 -> 1 with tanh, scoring candidate moves.
+// MLP 13 -> 24 -> 24 -> 1 with tanh, scoring candidate moves. The first 10 features
+// match legacy brain.py; 3 threat/guard features were added later.
+export const N_FEATURES = 13;
 const MAX_DIST = 2 * (BOARD - 1);
 const MAX_MATERIAL = 39.0;
 const CENTER = (BOARD - 1) / 2;
+const MAX_COVER = 4; // coverage counts are capped, then scaled to 0..1
 
 interface Layer {
   w: number[][]; // [out][in]
@@ -29,7 +32,11 @@ function dense(layer: Layer, x: number[], activate: boolean): number[] {
 }
 
 export class Brain {
-  constructor(private readonly weights: BrainWeights) {}
+  private readonly weights: BrainWeights;
+
+  constructor(weights: BrainWeights) {
+    this.weights = padInputs(weights);
+  }
 
   score(x: number[]): number {
     const { layers } = this.weights;
@@ -37,6 +44,14 @@ export class Brain {
     for (let i = 0; i < layers.length; i++) h = dense(layers[i], h, i < layers.length - 1);
     return h[0];
   }
+}
+
+/** Older brains take fewer inputs; zero weights for the new ones keep their play unchanged. */
+export function padInputs(w: BrainWeights): BrainWeights {
+  const [first, ...rest] = w.layers;
+  if (first.w[0].length >= N_FEATURES) return w;
+  const pad = (row: number[]) => [...row, ...new Array<number>(N_FEATURES - row.length).fill(0)];
+  return { layers: [{ w: first.w.map(pad), b: first.b }, ...rest] };
 }
 
 export async function loadBrain(url: string): Promise<Brain | null> {
@@ -80,10 +95,14 @@ export class NNPolicy implements Policy {
     const enemyMat = enemies.reduce((s, p) => s + PIECE_VALUE[p.name], 0);
     const matBalance = (material(pieces, color) - enemyMat) / MAX_MATERIAL;
     const forward = color === "black" ? 1 : -1;
+    const enemyColor: Color = color === "white" ? "black" : "white";
+    const cover = (c: Color, col: number, row: number, exclude: Piece | null = null) =>
+      Math.min(coverCount(c, col, row, pieces, exclude), MAX_COVER) / MAX_COVER;
 
     let best: Move | null = null;
     let bestScore = -Infinity;
     for (const p of idle) {
+      const threatNow = cover(enemyColor, p.col, p.row);
       for (const t of getLegalTargets(p, pieces)) {
         const [tc, tr] = t;
         const enemy = enemyTiles.get(tr * BOARD + tc) ?? null;
@@ -106,6 +125,9 @@ export class NNPolicy implements Policy {
           (forward * (tr - p.row)) / (BOARD - 1),
           matBalance,
           1.0 - (Math.abs(tc - CENTER) + Math.abs(tr - CENTER)) / MAX_DIST,
+          cover(enemyColor, tc, tr),  // enemies that could hit the target square
+          cover(color, tc, tr, p),    // friends guarding the target square
+          threatNow,                  // this piece is under attack where it stands
         ];
         const s = this.brain.score(features) + (this.sigma > 0 ? this.sigma * gaussian() : 0);
         if (s > bestScore) {

@@ -3,14 +3,16 @@ import { AIController } from "./ai";
 import { Brain, NNPolicy, loadBrain } from "./brain";
 import {
   BASE_PIECE_SPEED, BOARD, Color, DEFAULT_SPEED, HEIGHT, HP_MAP, PIECE_NAMES, PieceName, SPEED_PRESETS,
-  SpeedKey, TILE, Tile, WIDTH, inBounds,
+  STOP_BTN_RADIUS, SpeedKey, TILE, Tile, WIDTH, inBounds,
 } from "./constants";
+import { PieceSpec, fromFen, toFen } from "./fen";
 import { Piece, setPieceSpeed } from "./piece";
 import {
   DEATH_MS, Images, PieceSet, drawAttackDots, drawBoard, drawDeaths, drawGuards, drawHighlights, drawPiece,
   drawPromotionChoices, drawStatus, loadPieceImages, promotionChoiceAt,
 } from "./render";
 import { createPieces, getLegalTargets, pawnsToPromote, processCombat } from "./rules";
+import { setSoundEnabled, sfx, unlockAudio } from "./sound";
 
 interface Settings {
   speed: SpeedKey;
@@ -20,6 +22,7 @@ interface Settings {
   pieceSet: PieceSet;
   promotion: "auto" | "choose";
   guard: boolean; // formation defense
+  sound: boolean;
 }
 
 const HP_MIN = 10;
@@ -39,13 +42,6 @@ interface Game {
   sandbox: boolean; // board-editor game: both sides, no cooldown
 }
 
-interface PieceSpec {
-  color: Color;
-  name: PieceName;
-  col: number;
-  row: number;
-}
-
 type Brush = { color: Color; name: PieceName } | "erase";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -55,12 +51,14 @@ const ctx = canvas.getContext("2d")!;
 const menu = $("menu");
 const gameOverPanel = $("gameover");
 const editorPanel = $("editor");
-// Hidden board editor, enabled with ?sandbox in the URL.
-const SANDBOX = new URLSearchParams(location.search).has("sandbox");
+// Hidden board editor, enabled with ?sandbox in the URL; ?setup=<FEN> preloads a layout.
+const params = new URLSearchParams(location.search);
+const SANDBOX = params.has("sandbox");
+const SHARED_SETUP = fromFen(params.get("setup") ?? "");
 
 const settings: Settings = {
   speed: DEFAULT_SPEED, aiEnabled: true, difficulty: 5, hp: { ...HP_MAP }, pieceSet: "war",
-  promotion: "auto", guard: false,
+  promotion: "auto", guard: false, sound: true,
 };
 const hpInputs = new Map<PieceName, HTMLInputElement>();
 let images: Record<PieceSet, Images> | null = null;
@@ -103,6 +101,48 @@ function renderMenu(): void {
   document.querySelectorAll<HTMLButtonElement>("#guard-mode button").forEach((b) => {
     b.classList.toggle("active", (b.dataset.guard === "on") === settings.guard);
   });
+  document.querySelectorAll<HTMLButtonElement>("#sound-mode button").forEach((b) => {
+    b.classList.toggle("active", (b.dataset.sound === "on") === settings.sound);
+  });
+  saveSettings();
+}
+
+// --- Saved settings ----------------------------------------------------------
+
+const STORAGE_KEY = "rtchess.settings";
+
+/** Restores saved settings, keeping defaults for anything missing or invalid. */
+function loadSettings(): void {
+  let s: Record<string, unknown>;
+  try {
+    s = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+  } catch {
+    return;
+  }
+  if (typeof s !== "object" || s === null) return;
+  if (typeof s.speed === "string" && s.speed in SPEED_PRESETS) settings.speed = s.speed as SpeedKey;
+  if (typeof s.aiEnabled === "boolean") settings.aiEnabled = s.aiEnabled;
+  if (Number.isInteger(s.difficulty) && (s.difficulty as number) >= 0 && (s.difficulty as number) <= 10) {
+    settings.difficulty = s.difficulty as number;
+  }
+  if (s.pieceSet === "war" || s.pieceSet === "classic") settings.pieceSet = s.pieceSet;
+  if (s.promotion === "auto" || s.promotion === "choose") settings.promotion = s.promotion;
+  if (typeof s.guard === "boolean") settings.guard = s.guard;
+  if (typeof s.sound === "boolean") settings.sound = s.sound;
+  const hp = (s.hp ?? {}) as Record<string, unknown>;
+  for (const name of PIECE_NAMES) {
+    const v = hp[name];
+    if (typeof v === "number" && v >= HP_MIN && v <= HP_MAX) settings.hp[name] = Math.round(v);
+  }
+}
+
+function saveSettings(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Storage can be unavailable (private mode, quota); settings then last for the session.
+  }
+  setSoundEnabled(settings.sound);
 }
 
 const optionsPanel = $("options");
@@ -120,6 +160,18 @@ function closeOptions(): void {
   menu.classList.remove("hidden");
 }
 
+const howtoPanel = $("howto");
+
+function openHowto(): void {
+  menu.classList.add("hidden");
+  howtoPanel.classList.remove("hidden");
+}
+
+function closeHowto(): void {
+  howtoPanel.classList.add("hidden");
+  menu.classList.remove("hidden");
+}
+
 function initHpMenu(): void {
   const grid = $("hp-grid");
   for (const name of PIECE_NAMES) {
@@ -133,6 +185,7 @@ function initHpMenu(): void {
       const v = Math.round(Number(input.value));
       if (Number.isFinite(v)) settings.hp[name] = Math.min(HP_MAX, Math.max(HP_MIN, v));
       input.value = String(settings.hp[name]);
+      saveSettings();
     });
     grid.append(label, input);
     hpInputs.set(name, input);
@@ -210,6 +263,20 @@ function initEditor(): void {
   $("ed-clear").addEventListener("click", () => { editorPieces = []; });
   $("ed-standard").addEventListener("click", () => { editorPieces = createPieces(settings.hp); });
   $("ed-menu").addEventListener("click", showMenu);
+  $("ed-link").addEventListener("click", () => {
+    if (!editorPieces) return;
+    const url = new URL(location.pathname, location.origin);
+    url.searchParams.set("sandbox", "");
+    url.searchParams.set("setup", toFen(editorPieces));
+    history.replaceState(null, "", url);
+    const btn = $("ed-link");
+    const flash = (msg: string) => {
+      btn.textContent = msg;
+      setTimeout(() => { btn.textContent = "Copy link"; }, 1500);
+    };
+    if (!navigator.clipboard) flash("In address bar");
+    else navigator.clipboard.writeText(url.href).then(() => flash("Copied!"), () => flash("In address bar"));
+  });
   $("ed-play").addEventListener("click", () => {
     if (!editorPieces) return;
     sandboxLayout = editorPieces.map((p) => ({ color: p.color, name: p.name, col: p.col, row: p.row }));
@@ -253,10 +320,21 @@ function initMenu(): void {
       renderMenu();
     });
   });
+  document.querySelectorAll<HTMLButtonElement>("#sound-mode button").forEach((b) => {
+    b.addEventListener("click", () => {
+      settings.sound = b.dataset.sound === "on";
+      renderMenu();
+      unlockAudio();
+      sfx.move();
+    });
+  });
   $("options-btn").addEventListener("click", openOptions);
   $("options-back").addEventListener("click", closeOptions);
+  $("howto-btn").addEventListener("click", openHowto);
+  $("howto-back").addEventListener("click", closeHowto);
   $("start").addEventListener("click", () => startGame());
   $("again").addEventListener("click", () => (game?.sandbox ? openEditor() : showMenu()));
+  loadSettings();
   initHpMenu();
   initEditor();
   renderMenu();
@@ -266,6 +344,7 @@ function initMenu(): void {
 
 function startGame(layout: PieceSpec[] | null = null): void {
   if (!images) return;
+  unlockAudio();
   const sandbox = layout !== null;
   const moveInterval = SPEED_PRESETS[settings.speed];
   setPieceSpeed((BASE_PIECE_SPEED * SPEED_PRESETS.fast) / moveInterval);
@@ -300,8 +379,11 @@ function startGame(layout: PieceSpec[] | null = null): void {
 }
 
 function endGame(g: Game, winner: string): void {
+  if (g.gameOver) return;
   g.gameOver = true;
   g.winner = winner;
+  const humanLost = g.myColor !== null && winner.toLowerCase() !== g.myColor;
+  (humanLost ? sfx.lose : sfx.win)();
   $("winner-text").textContent = `${winner} wins!`;
   // Let the King's death animation play before covering the board.
   setTimeout(() => {
@@ -322,17 +404,20 @@ function pendingPromotions(g: Game): Piece[] {
   return pawnsToPromote(g.pieces).filter((p) => !g.ai || p.color !== g.ai.color);
 }
 
-function handleClick(g: Game, mx: number, my: number): void {
+function handleClick(g: Game, mx: number, my: number, stopRadius: number): void {
   const choice = promotionChoiceAt(pendingPromotions(g), mx, my);
   if (choice) {
     const [pawn, name] = choice;
-    if (g.myColor === null || pawn.color === g.myColor) pawn.promote(name, settings.hp[name]);
+    if (g.myColor === null || pawn.color === g.myColor) {
+      pawn.promote(name, settings.hp[name]);
+      sfx.promote();
+    }
     return;
   }
 
   // Stop buttons first.
   for (const p of g.pieces) {
-    if (p.stopBtnHit(mx, my)) {
+    if (p.stopBtnHit(mx, my, stopRadius)) {
       if (g.myColor !== null && p.color !== g.myColor) continue;
       p.stop();
       deselect(g);
@@ -361,6 +446,7 @@ function handleClick(g: Game, mx: number, my: number): void {
     if (g.cooldownMs && now - g.lastActionMs[sel.color] < g.cooldownMs) return;
     g.lastActionMs[sel.color] = now;
     sel.startMove(col, row);
+    sfx.move();
     deselect(g);
   } else if (clicked) {
     g.selected = clicked;
@@ -381,7 +467,10 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   if (!game || game.gameOver || e.button !== 0) return;
-  handleClick(game, mx, my);
+  unlockAudio();
+  // Keep the stop button at least ~22 CSS px to tap when the board is scaled down (phones).
+  const stopRadius = Math.min(30, Math.max(STOP_BTN_RADIUS, (22 * WIDTH) / rect.width));
+  handleClick(game, mx, my, stopRadius);
 });
 
 canvas.addEventListener("contextmenu", (e) => {
@@ -390,6 +479,7 @@ canvas.addEventListener("contextmenu", (e) => {
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !optionsPanel.classList.contains("hidden")) closeOptions();
+  else if (e.key === "Escape" && !howtoPanel.classList.contains("hidden")) closeHowto();
   else if (e.key === "Escape" && game?.sandbox) openEditor();
   else if (e.key === "Escape" && (game || editorPieces)) showMenu();
   else if (e.key === "Enter" && !game && !editorPieces && !menu.classList.contains("hidden")) {
@@ -410,11 +500,16 @@ function simulate(g: Game, dt: number): void {
   if (g.ai && g.whiteStarted) g.ai.update(dt, g.pieces);
 
   // Combat before movement so damage applies until full arrival.
+  const aliveBefore = g.pieces.filter((p) => p.alive).length;
   processCombat(g.pieces, dt, settings.guard);
+  if (g.pieces.filter((p) => p.alive).length < aliveBefore) sfx.death();
+  else if (g.pieces.some((p) => p.beingAttacked)) sfx.hit();
   for (const p of g.pieces) p.update(dt, g.pieces);
   const waiting = pendingPromotions(g);
   for (const p of pawnsToPromote(g.pieces)) {
-    if (!waiting.includes(p)) p.promote("Queen", settings.hp.Queen);
+    if (waiting.includes(p)) continue;
+    p.promote("Queen", settings.hp.Queen);
+    sfx.promote();
   }
 
   for (const p of g.pieces) {
@@ -508,6 +603,10 @@ async function boot(): Promise<void> {
   images = { war, classic };
   brain = b;
   startBtn.disabled = false;
+  if (SANDBOX && SHARED_SETUP) {
+    sandboxLayout = SHARED_SETUP;
+    openEditor();
+  }
   requestAnimationFrame(frame);
 }
 

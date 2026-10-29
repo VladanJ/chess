@@ -1,0 +1,6 @@
+# Normalise line endings so Windows (CRLF) and WSL/Linux (LF) checkouts agree.
+* text=auto
+
+*.png binary
+*.ico binary
+*.pt binary

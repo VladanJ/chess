@@ -172,13 +172,20 @@ function covers(q: Piece, col: number, row: number, pieces: Piece[]): boolean {
   return true;
 }
 
-/** Number of idle friendly pieces guarding (col, row) for *defender*. */
-export function guardCount(defender: Piece, col: number, row: number, pieces: Piece[]): number {
+/** Number of idle *color* pieces (other than *exclude*) that could move to (col, row) were it empty. */
+export function coverCount(
+  color: Piece["color"], col: number, row: number, pieces: Piece[], exclude: Piece | null = null,
+): number {
   let n = 0;
   for (const q of pieces) {
-    if (q !== defender && q.alive && q.color === defender.color && !q.moving && covers(q, col, row, pieces)) n++;
+    if (q !== exclude && q.alive && q.color === color && !q.moving && covers(q, col, row, pieces)) n++;
   }
   return n;
+}
+
+/** Number of idle friendly pieces guarding (col, row) for *defender*. */
+export function guardCount(defender: Piece, col: number, row: number, pieces: Piece[]): number {
+  return coverCount(defender.color, col, row, pieces, defender);
 }
 
 const BACK_RANK: PieceName[] = ["Rook", "Knight", "Bishop", "Queen", "King", "Bishop", "Knight", "Rook"];

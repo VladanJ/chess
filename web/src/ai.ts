@@ -114,6 +114,13 @@ export class AIController {
     const idle = pieces.filter((p) => p.alive && p.color === this.color && !p.moving);
     if (idle.length === 0) return false;
 
+    // King safety first, at every difficulty and for the trained brain too.
+    const defense = this.defendKing(idle, pieces, enemies);
+    if (defense !== null) {
+      defense[0].startMove(defense[1][0], defense[1][1]);
+      return true;
+    }
+
     // Below max difficulty, some moves fall back to the weaker heuristic so the brain isn't always at full strength.
     if (this.policy !== null && Math.random() >= this.randomness) {
       const choice = this.policy.choose(idle, pieces, this.color);
@@ -123,13 +130,6 @@ export class AIController {
     }
 
     const enemyKing = enemies.find((p) => p.name === "King") ?? null;
-
-    // King safety first, at every difficulty.
-    const defense = this.defendKing(idle, pieces, enemies);
-    if (defense !== null) {
-      defense[0].startMove(defense[1][0], defense[1][1]);
-      return true;
-    }
 
     // Enemy-occupied tiles (current + mid-slide next tile).
     const enemyTiles = new Map<number, Piece>();

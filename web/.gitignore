@@ -2,3 +2,4 @@ node_modules/
 dist/
 tools/.train.mjs
 tools/brain.backup.json
+tests/.out/

@@ -36,6 +36,7 @@
           <button id="ed-clear">Clear</button>
           <button id="ed-standard">Standard</button>
           <button id="ed-menu">Menu</button>
+          <button id="ed-link">Copy link</button>
           <button id="ed-play" class="active">Play</button>
         </div>
         <p class="hint">Pick a piece, then click squares. Right-click erases.</p>
@@ -78,6 +79,7 @@
 
           <div class="row">
             <button id="options-btn">Options</button>
+            <button id="howto-btn">How to play</button>
           </div>
 
           <button id="start" class="primary">Start Game</button>
@@ -105,12 +107,48 @@
           <p class="hint">A piece on a square that friendly pieces could move to takes less damage:
             1 guard = 50% less, 2 = 75% less, 3 = 87.5% less, and so on.</p>
 
+          <h2>Sound</h2>
+          <div class="row" id="sound-mode">
+            <button data-sound="on">On</button>
+            <button data-sound="off">Off</button>
+          </div>
+
           <h2>Piece HP</h2>
           <div id="hp-grid" class="hp-grid"></div>
           <p class="hint">Each attacker deals 10 HP per second.</p>
           <button id="hp-reset">Reset HP to defaults</button>
 
           <button id="options-back" class="primary">Back</button>
+        </div>
+      </div>
+
+      <div id="howto" class="overlay hidden">
+        <div class="panel howto">
+          <h1>How to play</h1>
+
+          <h2>Goal</h2>
+          <p>Destroy the enemy <b>King</b>. There are no turns: both sides move at the same time.</p>
+
+          <h2>Moving</h2>
+          <p>Select one of your pieces, then a target. <span class="dot grey"></span> grey dots are moves,
+            <span class="dot red"></span> red dots are attacks. Pieces slide square by square in real time;
+            tap the red <b>&times;</b> on a moving piece to stop it.</p>
+          <p>After each move you wait for your <b>cooldown</b> (meter at the bottom right) before the next one.
+            Select and look at pieces any time.</p>
+
+          <h2>Combat</h2>
+          <p>A piece that runs into an enemy stops and deals <b>10 HP per second</b> for as long as it stays.
+            Several attackers add up. Health bars go green &rarr; orange &rarr; red.</p>
+
+          <h2>Pawns</h2>
+          <p><img class="inline" src="pieces/war/Pawn/white.svg" alt="" /> Pawns walk forward (two squares on
+            their first move) but only attack <b>diagonally</b>. A pawn reaching the far side is promoted.</p>
+
+          <h2>Options</h2>
+          <p><b>Formation defense:</b> a piece on a square your other pieces could move to takes half damage per
+            guard, shown as small shields. <b>Promotion:</b> auto-Queen or pick the piece yourself.</p>
+
+          <button id="howto-back" class="primary">Got it</button>
         </div>
       </div>
 

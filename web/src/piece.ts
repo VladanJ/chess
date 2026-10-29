@@ -389,9 +389,9 @@ export class Piece {
     ];
   }
 
-  stopBtnHit(mx: number, my: number): boolean {
+  stopBtnHit(mx: number, my: number, radius = STOP_BTN_RADIUS): boolean {
     if (!this.moving || !this.alive) return false;
     const [cx, cy] = this.stopBtnCenter();
-    return Math.hypot(mx - cx, my - cy) <= STOP_BTN_RADIUS;
+    return Math.hypot(mx - cx, my - cy) <= radius;
   }
 }

@@ -1,6 +1,6 @@
 {
   "private": true,
   "scripts": {
-    "build": "npm ci --prefix web && npm run build --prefix web"
+    "build": "npm ci --prefix web && npm test --prefix web && npm run build --prefix web"
   }
 }
