@@ -14,11 +14,11 @@ export const PIECE_NAMES: readonly PieceName[] = [
 
 export const HP_MAP: Record<PieceName, number> = {
   Pawn: 100,
-  Knight: 300,
-  Bishop: 300,
-  Rook: 500,
-  Queen: 1000,
-  King: 100,
+  Knight: 200,
+  Bishop: 200,
+  Rook: 300,
+  Queen: 500,
+  King: 500,
 };
 
 // Relative worth of each piece, used by the AI to prioritise captures.
