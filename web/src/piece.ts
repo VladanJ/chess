@@ -16,11 +16,11 @@ export class Piece {
   static attackCounter = 0;
 
   readonly color: Color;
-  readonly name: PieceName;
+  name: PieceName;
   col: number;
   row: number;
   hp: number;
-  readonly maxHp: number;
+  maxHp: number;
   alive = true;
 
   moving = false;
@@ -48,6 +48,7 @@ export class Piece {
   hasMoved = false;
   // performance.now() when first drawn dead; drives the death animation.
   diedAt: number | null = null;
+  promotedAt: number | null = null;
 
   constructor(color: Color, name: PieceName, col: number, row: number, hp = HP_MAP[name]) {
     this.color = color;
@@ -358,6 +359,14 @@ export class Piece {
       }
     }
     return null;
+  }
+
+  /** Becomes *name*, keeping the same fraction of health. */
+  promote(name: PieceName, maxHp: number): void {
+    this.hp = (maxHp * this.hp) / this.maxHp;
+    this.maxHp = maxHp;
+    this.name = name;
+    this.promotedAt = performance.now();
   }
 
   stop(): void {

@@ -7,6 +7,8 @@ import { Piece } from "./piece";
 export type Images = Record<Color, Record<PieceName, HTMLImageElement>>;
 export type PieceSet = "war" | "classic";
 
+const PROMO_MS = 800;
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -153,6 +155,19 @@ export function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, images: Image
   }
 
   drawHp(ctx, p, now);
+
+  if (p.promotedAt !== null) {
+    const u = (now - p.promotedAt) / PROMO_MS;
+    if (u < 1) {
+      ctx.globalAlpha = 1 - u;
+      ctx.strokeStyle = "#f6c945";
+      ctx.lineWidth = 7 * (1 - u) + 1;
+      ctx.beginPath();
+      ctx.arc(p.pixelX + TILE / 2, p.pixelY + TILE / 2, 20 + 45 * u, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
 
   const half = TILE / 2;
   if (p.moving && !p.waiting) {

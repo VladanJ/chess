@@ -10,7 +10,7 @@ import {
   DEATH_MS, Images, PieceSet, drawAttackDots, drawBoard, drawDeaths, drawHighlights, drawPiece,
   drawStatus, loadPieceImages,
 } from "./render";
-import { createPieces, getLegalTargets, processCombat } from "./rules";
+import { createPieces, getLegalTargets, processCombat, promotePawns } from "./rules";
 
 interface Settings {
   speed: SpeedKey;
@@ -261,6 +261,9 @@ function simulate(g: Game, dt: number): void {
   // Combat before movement so damage applies until full arrival.
   processCombat(g.pieces, dt);
   for (const p of g.pieces) p.update(dt, g.pieces);
+  const promoted = promotePawns(g.pieces, settings.hp.Queen);
+  // A selected pawn's move list is stale once it becomes a Queen.
+  if (g.selected && promoted.includes(g.selected)) deselect(g);
 
   for (const p of g.pieces) {
     if (p.name === "King" && !p.alive) endGame(g, p.color === "white" ? "Black" : "White");

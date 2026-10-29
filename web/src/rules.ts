@@ -143,6 +143,19 @@ export function processCombat(pieces: Piece[], dt: number): void {
 
 const BACK_RANK: PieceName[] = ["Rook", "Knight", "Bishop", "Queen", "King", "Bishop", "Knight", "Rook"];
 
+/** Pawns that have come to rest on the far rank become Queens. Returns the promoted pieces. */
+export function promotePawns(pieces: Piece[], queenHp: number): Piece[] {
+  const promoted: Piece[] = [];
+  for (const p of pieces) {
+    const lastRow = p.color === "white" ? 0 : BOARD - 1;
+    if (p.alive && p.name === "Pawn" && !p.moving && p.row === lastRow) {
+      p.promote("Queen", queenHp);
+      promoted.push(p);
+    }
+  }
+  return promoted;
+}
+
 export function createPieces(hp: Record<PieceName, number> = HP_MAP): Piece[] {
   const pieces: Piece[] = [];
   BACK_RANK.forEach((name, i) => pieces.push(new Piece("black", name, i, 0, hp[name])));
