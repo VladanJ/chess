@@ -51,6 +51,10 @@ export async function loadBrain(url: string): Promise<Brain | null> {
   }
 }
 
+export function gaussian(): number {
+  return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+}
+
 function material(pieces: Piece[], color: Color): number {
   let sum = 0;
   for (const p of pieces) if (p.alive && p.color === color) sum += PIECE_VALUE[p.name];
@@ -58,7 +62,8 @@ function material(pieces: Piece[], color: Color): number {
 }
 
 export class NNPolicy implements Policy {
-  constructor(private readonly brain: Brain) {}
+  /** *sigma* > 0 adds gaussian noise to move scores (training exploration). */
+  constructor(private readonly brain: Brain, private readonly sigma = 0) {}
 
   choose(idle: Piece[], pieces: Piece[], color: Color): Move | null {
     const enemies = pieces.filter((p) => p.alive && p.color !== color);
@@ -102,7 +107,7 @@ export class NNPolicy implements Policy {
           matBalance,
           1.0 - (Math.abs(tc - CENTER) + Math.abs(tr - CENTER)) / MAX_DIST,
         ];
-        const s = this.brain.score(features);
+        const s = this.brain.score(features) + (this.sigma > 0 ? this.sigma * gaussian() : 0);
         if (s > bestScore) {
           bestScore = s;
           best = [p, t];
