@@ -32,7 +32,7 @@ interface Game {
   gameOver: boolean;
   winner: string | null;
   cooldownMs: number;
-  lastActionMs: number;
+  lastActionMs: Record<Color, number>;
   whiteStarted: boolean;
 }
 
@@ -157,6 +157,7 @@ function startGame(): void {
   }
 
   const cooldownMs = Math.trunc(moveInterval * 1000);
+  const readyAt = performance.now() - cooldownMs;
   game = {
     pieces: createPieces(settings.hp),
     ai,
@@ -166,7 +167,7 @@ function startGame(): void {
     gameOver: false,
     winner: null,
     cooldownMs,
-    lastActionMs: performance.now() - cooldownMs,
+    lastActionMs: { white: readyAt, black: readyAt },
     whiteStarted: false,
   };
   menu.classList.add("hidden");
@@ -219,8 +220,8 @@ function handleClick(g: Game, mx: number, my: number): void {
     // Blocked moves keep the selection so the player can retry.
     const now = performance.now();
     if (sel.color === "black" && !g.whiteStarted) return;
-    if (g.cooldownMs && now - g.lastActionMs < g.cooldownMs) return;
-    g.lastActionMs = now;
+    if (g.cooldownMs && now - g.lastActionMs[sel.color] < g.cooldownMs) return;
+    g.lastActionMs[sel.color] = now;
     sel.startMove(col, row);
     deselect(g);
   } else if (clicked) {
@@ -261,14 +262,14 @@ function simulate(g: Game, dt: number): void {
   // Combat before movement so damage applies until full arrival.
   processCombat(g.pieces, dt);
   for (const p of g.pieces) p.update(dt, g.pieces);
-  const promoted = promotePawns(g.pieces, settings.hp.Queen);
-  // A selected pawn's move list is stale once it becomes a Queen.
-  if (g.selected && promoted.includes(g.selected)) deselect(g);
+  promotePawns(g.pieces, settings.hp.Queen);
 
   for (const p of g.pieces) {
     if (p.name === "King" && !p.alive) endGame(g, p.color === "white" ? "Black" : "White");
   }
   if (g.selected && (!g.selected.alive || g.selected.moving)) deselect(g);
+  // The board keeps changing, so the shown (and clickable) targets must too.
+  if (g.selected) g.legalTargets = getLegalTargets(g.selected, g.pieces);
 }
 
 function render(now: number): void {
@@ -292,12 +293,20 @@ function render(now: number): void {
     text = "White moves first.";
   }
 
-  const elapsed = now - g.lastActionMs;
+  const colors: Color[] = g.myColor ? [g.myColor] : ["white", "black"];
   drawStatus(ctx, {
     text,
     textColor,
-    cooldownFrac: g.cooldownMs && !g.gameOver ? Math.max(0, Math.min(1, elapsed / g.cooldownMs)) : null,
-    cooldownLeft: (g.cooldownMs - elapsed) / 1000,
+    meters: g.cooldownMs && !g.gameOver
+      ? colors.map((c) => {
+        const elapsed = now - g.lastActionMs[c];
+        return {
+          label: g.myColor ? null : (c === "white" ? "White" : "Black"),
+          frac: Math.max(0, Math.min(1, elapsed / g.cooldownMs)),
+          left: (g.cooldownMs - elapsed) / 1000,
+        };
+      })
+      : [],
   });
 }
 

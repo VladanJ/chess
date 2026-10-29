@@ -115,6 +115,8 @@ export function processCombat(pieces: Piece[], dt: number): void {
 
   for (const p of pieces) p.beingAttacked = false;
 
+  // Collect hits first so simultaneous lethal blows land regardless of array order.
+  const hits: Piece[] = [];
   for (const attacker of pieces) {
     if (!attacker.alive || !attacker.moving) continue;
     if (!attacker.hasReachedTile()) continue;
@@ -129,14 +131,16 @@ export function processCombat(pieces: Piece[], dt: number): void {
       const hit = (defender.col === target[0] && defender.row === target[1])
         || (defender.moving && !defender.hasReachedTile()
             && sameTile(defender.nextTile, target[0], target[1]));
-      if (hit) {
-        defender.hp -= damage;
-        defender.beingAttacked = true;
-        if (defender.hp <= 0) {
-          defender.hp = 0;
-          defender.alive = false;
-        }
-      }
+      if (hit) hits.push(defender);
+    }
+  }
+
+  for (const defender of hits) {
+    defender.hp -= damage;
+    defender.beingAttacked = true;
+    if (defender.hp <= 0) {
+      defender.hp = 0;
+      defender.alive = false;
     }
   }
 }

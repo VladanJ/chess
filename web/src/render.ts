@@ -290,11 +290,16 @@ export function drawDeaths(ctx: CanvasRenderingContext2D, pieces: Piece[], image
   }
 }
 
+export interface CooldownMeter {
+  label: string | null;
+  frac: number;
+  left: number; // seconds
+}
+
 export interface StatusInfo {
   text: string;
   textColor: string;
-  cooldownFrac: number | null; // null hides the meter
-  cooldownLeft: number;
+  meters: CooldownMeter[]; // empty hides the meters
 }
 
 export function drawStatus(ctx: CanvasRenderingContext2D, s: StatusInfo): void {
@@ -307,17 +312,26 @@ export function drawStatus(ctx: CanvasRenderingContext2D, s: StatusInfo): void {
   ctx.fillStyle = s.textColor;
   ctx.fillText(s.text, 10, y0 + STATUS_H / 2);
 
-  if (s.cooldownFrac === null) return;
-  const ready = s.cooldownFrac >= 1;
-  const barW = 150;
+  const barW = s.meters.length > 1 ? 110 : 150;
   const barH = 18;
-  const barX = WIDTH - barW - 12;
   const barY = y0 + 11;
-  ctx.fillStyle = "rgb(60,60,60)";
-  ctx.fillRect(barX, barY, barW, barH);
-  ctx.fillStyle = ready ? "rgb(90,200,90)" : "rgb(210,165,60)";
-  ctx.fillRect(barX, barY, Math.trunc(barW * s.cooldownFrac), barH);
-  ctx.fillStyle = "rgb(245,245,245)";
-  ctx.textAlign = "center";
-  ctx.fillText(ready ? "READY" : `${s.cooldownLeft.toFixed(1)}s`, barX + barW / 2, barY + barH / 2);
+  let x = WIDTH - 12;
+  for (const m of [...s.meters].reverse()) {
+    x -= barW;
+    const ready = m.frac >= 1;
+    ctx.fillStyle = "rgb(60,60,60)";
+    ctx.fillRect(x, barY, barW, barH);
+    ctx.fillStyle = ready ? "rgb(90,200,90)" : "rgb(210,165,60)";
+    ctx.fillRect(x, barY, Math.trunc(barW * m.frac), barH);
+    ctx.fillStyle = "rgb(245,245,245)";
+    ctx.textAlign = "center";
+    ctx.fillText(ready ? "READY" : `${m.left.toFixed(1)}s`, x + barW / 2, barY + barH / 2);
+    if (m.label) {
+      ctx.fillStyle = "rgb(200,200,200)";
+      ctx.textAlign = "right";
+      ctx.fillText(m.label, x - 6, barY + barH / 2);
+      x -= 6 + ctx.measureText(m.label).width;
+    }
+    x -= 16;
+  }
 }
