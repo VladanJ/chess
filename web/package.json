@@ -8,7 +8,11 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "train": "esbuild tools/train.ts --bundle --platform=node --format=esm --outfile=tools/.train.mjs --log-level=warning && node tools/.train.mjs",
-    "test": "esbuild tests/*.test.ts --bundle --platform=node --format=esm --outdir=tests/.out --log-level=warning && node --test tests/.out/*.test.js"
+    "test": "esbuild tests/*.test.ts --bundle --platform=node --format=esm --outdir=tests/.out --log-level=warning && node --test tests/.out/*.test.js",
+    "dev:crazygames": "vite --mode crazygames",
+    "dev:poki": "vite --mode poki",
+    "build:crazygames": "tsc --noEmit && vite build --mode crazygames",
+    "build:poki": "tsc --noEmit && vite build --mode poki"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

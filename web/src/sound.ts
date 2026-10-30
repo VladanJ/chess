@@ -2,11 +2,23 @@
 
 let ac: AudioContext | null = null;
 let enabled = true;
+let adPlaying = false;   // a portal ad is on screen
+let portalMuted = false; // the portal requires silence
 let lastHit = 0;
 
 export function setSoundEnabled(on: boolean): void {
   enabled = on;
 }
+
+export function setAdPlaying(on: boolean): void {
+  adPlaying = on;
+}
+
+export function setPortalMuted(on: boolean): void {
+  portalMuted = on;
+}
+
+const audible = () => enabled && !adPlaying && !portalMuted;
 
 /** Call from a user gesture (click/key) so browsers allow audio to start. */
 export function unlockAudio(): void {
@@ -16,7 +28,7 @@ export function unlockAudio(): void {
 }
 
 function tone(freq: number, dur: number, type: OscillatorType, vol: number, slideTo = freq, delay = 0): void {
-  if (!enabled || !ac || ac.state !== "running") return;
+  if (!audible() || !ac || ac.state !== "running") return;
   const t = ac.currentTime + delay;
   const osc = ac.createOscillator();
   const gain = ac.createGain();

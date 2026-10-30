@@ -40,6 +40,23 @@ npm run train -- --games 40000 --fresh    # start from random brains
 Add `?sandbox` to the URL to set up any position, play both sides with no cooldown, and
 share the setup as a link (`?sandbox&setup=<FEN>`).
 
+### Game portals (CrazyGames, Poki)
+
+The game talks to portals only through [`web/src/portal.ts`](web/src/portal.ts), which does
+nothing on our own site. Each portal's adapter lives in its own folder under
+[`web/portals/`](web/portals) and is swapped in at build time, together with that portal's SDK:
+
+```bash
+cd web
+npm run dev:crazygames     # local test; the SDK shows demo-ad overlays
+npm run build:crazygames   # -> web/dist-crazygames/, zip and upload at developer.crazygames.com
+npm run dev:poki
+npm run build:poki         # -> web/dist-poki/, zip and upload to inspector.poki.dev
+```
+
+Portal builds report loading and gameplay events, show an ad break before every match after
+the first, mute the game during ads, and hide unfinished features.
+
 ## Deployment
 
 Pushing to `main` deploys to Cloudflare Workers. The build (root [`package.json`](package.json))

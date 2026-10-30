@@ -3,3 +3,5 @@ dist/
 tools/.train.mjs
 tools/brain.backup.json
 tests/.out/
+dist-crazygames/
+dist-poki/

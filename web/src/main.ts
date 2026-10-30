@@ -12,7 +12,8 @@ import {
   drawPromotionChoices, drawStatus, loadPieceImages, promotionChoiceAt,
 } from "./render";
 import { createPieces, getLegalTargets, pawnsToPromote, processCombat } from "./rules";
-import { setSoundEnabled, sfx, unlockAudio } from "./sound";
+import { setAdPlaying, setPortalMuted, setSoundEnabled, sfx, unlockAudio } from "./sound";
+import { portal } from "@portal";
 
 interface Settings {
   speed: SpeedKey;
@@ -67,6 +68,30 @@ let game: Game | null = null;
 let editorPieces: Piece[] | null = null; // non-null while the editor is open
 let brush: Brush = { color: "white", name: "Pawn" };
 let sandboxLayout: PieceSpec[] = [];
+let playing = false;      // last gameplay state reported to the portal
+let gamesStarted = 0;
+let adRunning = false;    // ignore new-game requests while an ad break runs
+
+/** Reports gameplay start/stop to the portal, once per change. */
+function setPlaying(on: boolean): void {
+  if (on === playing) return;
+  playing = on;
+  if (on) portal.gameplayStart();
+  else portal.gameplayStop();
+}
+
+/** Starts a match, after a portal ad break if this isn't the session's first match. */
+async function requestGame(layout: PieceSpec[] | null = null): Promise<void> {
+  if (adRunning || !images) return;
+  unlockAudio();
+  if (gamesStarted > 0) {
+    adRunning = true;
+    await portal.commercialBreak();
+    adRunning = false;
+  }
+  gamesStarted++;
+  startGame(layout);
+}
 
 // --- Canvas sizing (sharp on HiDPI screens) ---------------------------------
 
@@ -198,6 +223,7 @@ function initHpMenu(): void {
 
 function showMenu(): void {
   game = null;
+  setPlaying(false);
   closeEditor();
   gameOverPanel.classList.add("hidden");
   menu.classList.remove("hidden");
@@ -237,6 +263,7 @@ function renderPalette(): void {
 
 function openEditor(): void {
   game = null;
+  setPlaying(false);
   menu.classList.add("hidden");
   gameOverPanel.classList.add("hidden");
   editorPanel.classList.remove("hidden");
@@ -281,7 +308,7 @@ function initEditor(): void {
     if (!editorPieces) return;
     sandboxLayout = editorPieces.map((p) => ({ color: p.color, name: p.name, col: p.col, row: p.row }));
     closeEditor();
-    startGame(sandboxLayout);
+    void requestGame(sandboxLayout);
   });
 }
 
@@ -332,7 +359,7 @@ function initMenu(): void {
   $("options-back").addEventListener("click", closeOptions);
   $("howto-btn").addEventListener("click", openHowto);
   $("howto-back").addEventListener("click", closeHowto);
-  $("start").addEventListener("click", () => startGame());
+  $("start").addEventListener("click", () => void requestGame());
   $("again").addEventListener("click", () => (game?.sandbox ? openEditor() : showMenu()));
   loadSettings();
   initHpMenu();
@@ -376,14 +403,17 @@ function startGame(layout: PieceSpec[] | null = null): void {
   };
   menu.classList.add("hidden");
   gameOverPanel.classList.add("hidden");
+  setPlaying(true);
 }
 
 function endGame(g: Game, winner: string): void {
   if (g.gameOver) return;
   g.gameOver = true;
   g.winner = winner;
+  setPlaying(false);
   const humanLost = g.myColor !== null && winner.toLowerCase() !== g.myColor;
   (humanLost ? sfx.lose : sfx.win)();
+  if (g.ai && !humanLost) portal.happyTime();
   $("winner-text").textContent = `${winner} wins!`;
   // Let the King's death animation play before covering the board.
   setTimeout(() => {
@@ -485,7 +515,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "Enter" && !game && !editorPieces && !menu.classList.contains("hidden")) {
     // Blur fires the input's change event so a just-typed HP value is applied.
     if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur();
-    startGame();
+    void requestGame();
   }
 });
 
@@ -597,12 +627,20 @@ async function boot(): Promise<void> {
   initMenu();
   const startBtn = $<HTMLButtonElement>("start");
   startBtn.disabled = true;
+  if (portal.name !== "web") $("opp-online").classList.add("hidden");
+  // A blocked or failing portal SDK must never stop the game from loading.
+  await portal.init({
+    pauseAudio: () => setAdPlaying(true),
+    resumeAudio: () => setAdPlaying(false),
+    setForcedMute: setPortalMuted,
+  }).catch((e) => console.warn("Portal SDK unavailable", e));
   const [war, classic, b] = await Promise.all([
     loadPieceImages("war"), loadPieceImages("classic"), loadBrain("brain.json"),
   ]);
   images = { war, classic };
   brain = b;
   startBtn.disabled = false;
+  portal.loadingDone();
   if (SANDBOX && SHARED_SETUP) {
     sandboxLayout = SHARED_SETUP;
     openEditor();
