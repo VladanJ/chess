@@ -460,6 +460,12 @@ def main():
         path = COVERS / f"cover-{w}x{h}.png"
         pygame.image.save(cover_charge(w, h), str(path))
         print(f"wrote {path}")
+    # Opening frames for the preview videos (the cover at video resolution).
+    for w, h in ((1920, 1080), (1080, 1620)):
+        path = WEB / "tools" / "video" / f"intro-{w}x{h}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pygame.image.save(cover_charge(w, h), str(path))
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":
