@@ -33,8 +33,10 @@ interface Game {
   pieces: Piece[];
   ai: AIController | null;
   myColor: Color | null; // null = hotseat, both colors playable
-  selected: Piece | null;
-  legalTargets: Tile[];
+  // One selection per side so hotseat players don't clobber each other.
+  selected: Record<Color, Piece | null>;
+  legalTargets: Record<Color, Tile[]>;
+  lastSelected: Color;
   gameOver: boolean;
   winner: string | null;
   cooldownMs: number;
@@ -392,8 +394,9 @@ function startGame(layout: PieceSpec[] | null = null): void {
     pieces: layout ? layout.map(makePiece) : createPieces(settings.hp),
     ai,
     myColor: aiEnabled ? "white" : null,
-    selected: null,
-    legalTargets: [],
+    selected: { white: null, black: null },
+    legalTargets: { white: [], black: [] },
+    lastSelected: "white",
     gameOver: false,
     winner: null,
     cooldownMs,
@@ -423,9 +426,15 @@ function endGame(g: Game, winner: string): void {
 
 // --- Input -------------------------------------------------------------------
 
-function deselect(g: Game): void {
-  g.selected = null;
-  g.legalTargets = [];
+function deselect(g: Game, color: Color): void {
+  g.selected[color] = null;
+  g.legalTargets[color] = [];
+}
+
+function select(g: Game, p: Piece): void {
+  g.selected[p.color] = p;
+  g.legalTargets[p.color] = getLegalTargets(p, g.pieces);
+  g.lastSelected = p.color;
 }
 
 /** Pawns on the far rank waiting for the player to pick a piece (AI pawns never wait). */
@@ -450,7 +459,7 @@ function handleClick(g: Game, mx: number, my: number, stopRadius: number): void 
     if (p.stopBtnHit(mx, my, stopRadius)) {
       if (g.myColor !== null && p.color !== g.myColor) continue;
       p.stop();
-      deselect(g);
+      deselect(g, p.color);
       return;
     }
   }
@@ -458,32 +467,36 @@ function handleClick(g: Game, mx: number, my: number, stopRadius: number): void 
   const col = Math.floor(mx / TILE);
   const row = Math.floor(my / TILE);
   if (!inBounds(col, row)) {
-    deselect(g);
+    deselect(g, g.lastSelected);
     return;
   }
 
   let clicked = g.pieces.find((p) => p.alive && !p.moving && p.col === col && p.row === row) ?? null;
   if (g.myColor !== null && clicked && clicked.color !== g.myColor) clicked = null;
 
-  const sel = g.selected;
-  if (clicked && (clicked === sel || (sel && clicked.color === sel.color))) {
-    g.selected = clicked;
-    g.legalTargets = getLegalTargets(clicked, g.pieces);
-  } else if (sel && g.legalTargets.some(([c, r]) => c === col && r === row)) {
-    // Blocked moves keep the selection so the player can retry.
-    const now = performance.now();
-    if (sel.color === "black" && !g.whiteStarted) return;
-    if (g.cooldownMs && now - g.lastActionMs[sel.color] < g.cooldownMs) return;
-    g.lastActionMs[sel.color] = now;
-    sel.startMove(col, row);
-    sfx.move();
-    deselect(g);
-  } else if (clicked) {
-    g.selected = clicked;
-    g.legalTargets = getLegalTargets(clicked, g.pieces);
-  } else {
-    deselect(g);
+  // The most recently selected side gets first claim on an ambiguous click.
+  const other: Color = g.lastSelected === "white" ? "black" : "white";
+  for (const color of [g.lastSelected, other]) {
+    const sel = g.selected[color];
+    if (!sel) continue;
+    if (clicked && clicked.color === color) {
+      select(g, clicked);
+      return;
+    }
+    if (g.legalTargets[color].some(([c, r]) => c === col && r === row)) {
+      // Blocked moves keep the selection so the player can retry.
+      const now = performance.now();
+      if (color === "black" && !g.whiteStarted) return;
+      if (g.cooldownMs && now - g.lastActionMs[color] < g.cooldownMs) return;
+      g.lastActionMs[color] = now;
+      sel.startMove(col, row);
+      sfx.move();
+      deselect(g, color);
+      return;
+    }
   }
+  if (clicked) select(g, clicked);
+  else deselect(g, g.lastSelected);
 }
 
 canvas.addEventListener("pointerdown", (e) => {
@@ -545,9 +558,12 @@ function simulate(g: Game, dt: number): void {
   for (const p of g.pieces) {
     if (p.name === "King" && !p.alive) endGame(g, p.color === "white" ? "Black" : "White");
   }
-  if (g.selected && (!g.selected.alive || g.selected.moving)) deselect(g);
-  // The board keeps changing, so the shown (and clickable) targets must too.
-  if (g.selected) g.legalTargets = getLegalTargets(g.selected, g.pieces);
+  for (const color of ["white", "black"] as const) {
+    const sel = g.selected[color];
+    if (sel && (!sel.alive || sel.moving)) deselect(g, color);
+    // The board keeps changing, so the shown (and clickable) targets must too.
+    else if (sel) g.legalTargets[color] = getLegalTargets(sel, g.pieces);
+  }
 }
 
 function render(now: number): void {
@@ -569,11 +585,13 @@ function render(now: number): void {
 
   if (!game) return;
   const g = game;
-  drawHighlights(ctx, g.selected, g.legalTargets, g.pieces);
+  const sides = ["white", "black"] as const;
+  for (const c of sides) drawHighlights(ctx, g.selected[c], g.legalTargets[c], g.pieces);
   for (const p of g.pieces) drawPiece(ctx, p, imgs, now);
   if (settings.guard) drawGuards(ctx, g.pieces);
   drawDeaths(ctx, g.pieces, imgs, now);
-  drawAttackDots(ctx, g.selected, g.legalTargets, g.pieces);
+  for (const c of sides) drawAttackDots(ctx, g.selected[c], g.legalTargets[c], g.pieces);
+  const selected = sides.map((c) => g.selected[c]).filter((p) => p !== null);
   const waiting = g.gameOver ? [] : pendingPromotions(g);
   drawPromotionChoices(ctx, waiting, imgs, now);
 
@@ -582,8 +600,8 @@ function render(now: number): void {
   if (g.gameOver) {
     text = `${g.winner} wins!`;
     textColor = "rgb(255,255,100)";
-  } else if (g.selected) {
-    text = `Selected: ${g.selected.color} ${g.selected.name}`;
+  } else if (selected.length > 0) {
+    text = `Selected: ${selected.map((p) => `${p.color} ${p.name}`).join(", ")}`;
     textColor = "rgb(220,220,220)";
   } else if (waiting.length > 0) {
     text = "Promote: pick a piece on the pawn's square.";
